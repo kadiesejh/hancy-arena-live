@@ -1,461 +1,62 @@
-
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
-import type { Session } from '@supabase/supabase-js';
+import { FormEvent, useState } from 'react';
 import { supabaseBrowser } from '../lib/supabase';
 
-type AuthMode = 'signup' | 'login' | 'forgot' | 'reset';
+const games = [
+  { name: 'Mobile Legends', short: 'MLBB', icon: '⚔️', color: '#7257ff', description: '5v5 MOBA' },
+  { name: 'PUBG Mobile', short: 'PUBG', icon: '🎯', color: '#f5a623', description: 'Battle Royale' },
+  { name: 'Free Fire', short: 'FREE FIRE', icon: '🔥', color: '#ff5738', description: 'Survival Battle' },
+  { name: 'Ludo', short: 'LUDO', icon: '🎲', color: '#20c997', description: 'Classic Board Game' },
+];
 
 const events = [
-  {
-    name: 'Hancy Weekly Cup',
-    type: '5v5 • Knockout',
-    entry: 'NPR 100',
-    prize: 'NPR 2,000',
-  },
-  {
-    name: 'Night Battle',
-    type: '5v5 • Best of 1',
-    entry: 'NPR 50',
-    prize: 'NPR 1,000',
-  },
-  {
-    name: 'Hancy Championship',
-    type: '5v5 • Best of 3',
-    entry: 'NPR 250',
-    prize: 'NPR 5,000',
-  },
+  { name: 'Hancy Weekly Cup', game: 'Mobile Legends', mode: '5v5 • Knockout', entry: 'NPR 100', prize: 'NPR 2,000' },
+  { name: 'Night Battle', game: 'Mobile Legends', mode: '5v5 • Best of 1', entry: 'NPR 50', prize: 'NPR 1,000' },
+  { name: 'Hancy Championship', game: 'Mobile Legends', mode: '5v5 • Best of 3', entry: 'NPR 250', prize: 'NPR 5,000' },
+  { name: 'PUBG Squad Clash', game: 'PUBG Mobile', mode: 'Squad • Battle Royale', entry: 'NPR 100', prize: 'NPR 2,500' },
+  { name: 'PUBG Night Survival', game: 'PUBG Mobile', mode: 'Squad • Survival', entry: 'NPR 50', prize: 'NPR 1,000' },
+  { name: 'Free Fire Booyah Cup', game: 'Free Fire', mode: 'Squad • Battle Royale', entry: 'NPR 100', prize: 'NPR 2,000' },
+  { name: 'Free Fire Clash', game: 'Free Fire', mode: 'Clash Squad', entry: 'NPR 50', prize: 'NPR 1,000' },
+  { name: 'Hancy Ludo Challenge', game: 'Ludo', mode: '1v1 • Classic', entry: 'NPR 20', prize: 'NPR 300' },
 ];
 
 export default function Home() {
+  const [selectedGame, setSelectedGame] = useState('All Games');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<AuthMode>('signup');
-  const [session, setSession] = useState<Session | null>(null);
-  const [dashboard, setDashboard] = useState(false);
-  const [activeTab, setActiveTab] = useState('Overview');
 
-  useEffect(() => {
-    let mounted = true;
-    const sb = supabaseBrowser();
+  const filteredEvents =
+    selectedGame === 'All Games'
+      ? events
+      : events.filter((event) => event.game === selectedGame);
 
-    if (!sb) return;
-
-    sb.auth.getSession().then(({ data, error }) => {
-      if (!mounted) return;
-
-      if (error) {
-        setMsg(error.message);
-        return;
-      }
-
-      setSession(data.session);
-
-      if (data.session) {
-        setEmail(data.session.user.email ?? '');
-        setDashboard(true);
-      }
-    });
-
-    const {
-      data: { subscription },
-    } = sb.auth.onAuthStateChange((event, newSession) => {
-      if (!mounted) return;
-
-      setSession(newSession);
-
-      if (newSession?.user.email) {
-        setEmail(newSession.user.email);
-      }
-
-      if (event === 'SIGNED_IN' && newSession) {
-        setDashboard(true);
-      }
-
-      if (event === 'SIGNED_OUT') {
-        setDashboard(false);
-        setMode('login');
-      }
-
-      if (event === 'PASSWORD_RECOVERY') {
-        setDashboard(false);
-        setMode('reset');
-        setMsg('Enter your new password below.');
-      }
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  function openAuth(nextMode: AuthMode) {
-    setMode(nextMode);
-    setMsg('');
-    setDashboard(false);
-    window.location.hash = 'login';
-  }
-
-  async function handleAuth(e: FormEvent<HTMLFormElement>) {
+  async function signup(e: FormEvent) {
     e.preventDefault();
     setMsg('');
     setBusy(true);
 
-    try {
-      const sb = supabaseBrowser();
-
-      if (!sb) {
-        setMsg('Supabase keys missing. Check your environment variables.');
-        return;
-      }
-
-      if (mode === 'signup') {
-        const { data, error } = await sb.auth.signUp({
-          email: email.trim(),
-          password,
-        });
-
-        if (error) throw error;
-
-        if (data.session) {
-          setSession(data.session);
-          setDashboard(true);
-          setMsg('');
-        } else {
-          setMsg(
-            'Account created! Check your email to confirm your account, then log in.'
-          );
-          setMode('login');
-        }
-      } else if (mode === 'login') {
-        const { data, error } = await sb.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-
-        if (error) throw error;
-
-        setSession(data.session);
-        setDashboard(true);
-        setMsg('');
-      } else if (mode === 'forgot') {
-        const { error } = await sb.auth.resetPasswordForEmail(
-          email.trim(),
-          {
-            redirectTo: window.location.origin,
-          }
-        );
-
-        if (error) throw error;
-
-        setMsg('Password reset email sent! Check your inbox.');
-      } else if (mode === 'reset') {
-        const { error } = await sb.auth.updateUser({
-          password: newPassword,
-        });
-
-        if (error) throw error;
-
-        setPassword('');
-        setNewPassword('');
-        setMode('login');
-        setMsg('Password updated successfully. Please log in.');
-      }
-    } catch (error) {
-      setMsg(
-        error instanceof Error ? error.message : 'Something went wrong.'
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function logout() {
     const sb = supabaseBrowser();
 
     if (!sb) {
-      setMsg('Supabase configuration is missing.');
+      setMsg('Supabase keys missing. Add them to .env.local');
+      setBusy(false);
       return;
     }
 
-    setBusy(true);
-    const { error } = await sb.auth.signOut();
-    setBusy(false);
+    const { error } = await sb.auth.signUp({ email, password });
 
-    if (error) {
-      setMsg(error.message);
-      return;
-    }
-
-    setSession(null);
-    setDashboard(false);
-    setMode('login');
-    setPassword('');
-    setMsg('You have logged out successfully.');
-    window.location.hash = 'login';
-  }
-
-  const btnStyle = {
-    display: 'inline-block',
-    border: 'none',
-    borderRadius: '10px',
-    padding: '12px 18px',
-    fontWeight: 700,
-    cursor: 'pointer',
-    background: '#a3ff12',
-    color: '#101010',
-    textDecoration: 'none',
-  } as const;
-
-  const panelStyle = {
-    background: '#171a22',
-    border: '1px solid #303542',
-    borderRadius: '16px',
-    padding: '20px',
-  } as const;
-
-  const mutedStyle = {
-    color: '#a6adbb',
-    fontSize: '14px',
-  } as const;
-
-  const fieldStyle = {
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    padding: '13px',
-    borderRadius: '9px',
-    border: '1px solid #424957',
-    background: '#0e1118',
-    color: '#ffffff',
-    marginBottom: '12px',
-  };
-
-  // PLAYER DASHBOARD
-  if (dashboard && session) {
-    return (
-      <main
-        style={{
-          minHeight: '100vh',
-          background: '#0b0d12',
-          color: '#fff',
-          padding: '20px',
-        }}
-      >
-        <div style={{ maxWidth: '1150px', margin: '0 auto' }}>
-          <header
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: '15px',
-              padding: '12px 0 25px',
-              borderBottom: '1px solid #292e39',
-            }}
-          >
-            <div
-              style={{
-                fontSize: '24px',
-                fontWeight: 900,
-                letterSpacing: '1px',
-              }}
-            >
-              HANCY <span style={{ color: '#a3ff12' }}>ARENA</span>
-            </div>
-
-            <button
-              onClick={logout}
-              disabled={busy}
-              style={btnStyle}
-            >
-              {busy ? 'Please wait...' : 'Logout'}
-            </button>
-          </header>
-
-          <section style={{ padding: '32px 0 22px' }}>
-            <p style={{ color: '#a3ff12', fontWeight: 700 }}>
-              PLAYER PANEL
-            </p>
-            <h1 style={{ fontSize: 'clamp(28px, 5vw, 42px)', margin: '8px 0' }}>
-              Welcome to Hancy Arena! 🎮
-            </h1>
-            <p style={mutedStyle}>
-              Logged in as: {session.user.email}
-            </p>
-          </section>
-
-          <nav
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '10px',
-              marginBottom: '25px',
-            }}
-          >
-            {['Overview', 'Tournaments', 'My Team', 'Match Results', 'Profile'].map(
-              (tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  style={{
-                    ...btnStyle,
-                    background: activeTab === tab ? '#a3ff12' : '#202530',
-                    color: activeTab === tab ? '#101010' : '#ffffff',
-                  }}
-                >
-                  {tab}
-                </button>
-              )
-            )}
-          </nav>
-
-          {activeTab === 'Overview' && (
-            <>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                  gap: '16px',
-                  marginBottom: '28px',
-                }}
-              >
-                <div style={panelStyle}>
-                  <p style={mutedStyle}>My Tournaments</p>
-                  <h2>0</h2>
-                </div>
-                <div style={panelStyle}>
-                  <p style={mutedStyle}>Team Members</p>
-                  <h2>0</h2>
-                </div>
-                <div style={panelStyle}>
-                  <p style={mutedStyle}>Matches Played</p>
-                  <h2>0</h2>
-                </div>
-                <div style={panelStyle}>
-                  <p style={mutedStyle}>Total Winnings</p>
-                  <h2>NPR 0</h2>
-                </div>
-              </div>
-
-              <div style={panelStyle}>
-                <h2>🏆 Featured Tournaments</h2>
-                <p style={mutedStyle}>
-                  Explore tournaments and check their entry fees and prize pools.
-                </p>
-
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                    gap: '16px',
-                    marginTop: '20px',
-                  }}
-                >
-                  {events.map((event) => (
-                    <div
-                      key={event.name}
-                      style={{
-                        ...panelStyle,
-                        background: '#10131a',
-                      }}
-                    >
-                      <span style={{ color: '#a3ff12', fontWeight: 700 }}>
-                        OPEN
-                      </span>
-                      <h3>{event.name}</h3>
-                      <p style={mutedStyle}>{event.type}</p>
-                      <p>Entry: {event.entry}</p>
-                      <p>Prize Pool: {event.prize}</p>
-                      <button
-                        onClick={() => setActiveTab('Tournaments')}
-                        style={btnStyle}
-                      >
-                        View Tournament
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-
-          {activeTab === 'Tournaments' && (
-            <section style={panelStyle}>
-              <h2>🔥 Available Tournaments</h2>
-              <p style={mutedStyle}>
-                Choose a tournament to view its entry fee and prize pool.
-              </p>
-              {events.map((event) => (
-                <div
-                  key={event.name}
-                  style={{
-                    padding: '16px 0',
-                    borderBottom: '1px solid #303542',
-                  }}
-                >
-                  <h3>{event.name}</h3>
-                  <p style={mutedStyle}>{event.type}</p>
-                  <p>Entry: {event.entry} • Prize: {event.prize}</p>
-                  <p style={mutedStyle}>
-                    Registration will be enabled after the tournament database
-                    and registration system are connected.
-                  </p>
-                </div>
-              ))}
-            </section>
-          )}
-
-          {activeTab === 'My Team' && (
-            <section style={panelStyle}>
-              <h2>👥 My Team</h2>
-              <p style={mutedStyle}>
-                You have not joined a team yet. Team creation and member
-                management need to be connected to the database.
-              </p>
-            </section>
-          )}
-
-          {activeTab === 'Match Results' && (
-            <section style={panelStyle}>
-              <h2>🏆 Match Results</h2>
-              <p style={mutedStyle}>
-                Your match results will appear here after matches and results
-                are connected to the database.
-              </p>
-            </section>
-          )}
-
-          {activeTab === 'Profile' && (
-            <section style={panelStyle}>
-              <h2>👤 My Profile</h2>
-              <p style={mutedStyle}>Account email</p>
-              <p>{session.user.email}</p>
-              <p style={mutedStyle}>
-                Your account is signed in with Supabase authentication.
-              </p>
-            </section>
-          )}
-
-          <footer
-            style={{
-              textAlign: 'center',
-              padding: '35px 0 10px',
-              color: '#a6adbb',
-            }}
-          >
-            © 2026 Hancy Arena • MLBB Tournament Platform
-          </footer>
-        </div>
-      </main>
+    setMsg(
+      error
+        ? error.message
+        : 'Account created! Check your email if confirmation is enabled.'
     );
+
+    setBusy(false);
   }
 
-  // ORIGINAL HOMEPAGE + AUTHENTICATION
   return (
     <>
       <header>
@@ -463,13 +64,13 @@ export default function Home() {
           <div className="logo">
             HANCY<span>ARENA</span>
           </div>
+
           <div className="links">
             <a href="#home">Home</a>
+            <a href="#games">Games</a>
             <a href="#tournaments">Tournaments</a>
             <a href="#leaderboard">Leaderboard</a>
-            <a href="#login" onClick={() => openAuth('login')}>
-              Login
-            </a>
+            <a href="#login">Login</a>
           </div>
         </div>
       </header>
@@ -480,32 +81,29 @@ export default function Home() {
             <div>
               <span className="badge">⚡ REAL MLBB TOURNAMENT PLATFORM</span>
               <h1>
-                Play. Compete.
+                Play.
+                Compete.
                 <br />
                 <span>Win.</span>
               </h1>
               <p>
-                Hancy Arena is your place to join Mobile Legends tournaments,
-                register your squad and track competition results.
+                Hancy Arena mein apni squad banao, tournaments join karo aur
+                competition mein apna naam banao.
               </p>
-              <a className="btn" href="#tournaments">
-                Join Tournament
-              </a>
-              <a
-                className="btn alt"
-                href="#login"
-                onClick={() => openAuth('signup')}
-              >
-                Create Account
-              </a>
+              <a className="btn" href="#games">Explore Games</a>
+              <a className="btn alt" href="#login">Create Account</a>
             </div>
 
-            <div className="panel">
+            <div className="panel hero-panel">
               <div className="trophy">🏆</div>
-              <h2 style={{ textAlign: 'center' }}>HANCY ARENA</h2>
-              <p className="muted" style={{ textAlign: 'center' }}>
-                Your MLBB tournament platform.
-              </p>
+              <h2>HANCY ARENA</h2>
+              <p className="muted">Choose your game. Join the battle.</p>
+              <div className="hero-icons">
+                <span>⚔️</span>
+                <span>🎯</span>
+                <span>🔥</span>
+                <span>🎲</span>
+              </div>
             </div>
           </section>
 
@@ -530,28 +128,73 @@ export default function Home() {
             </div>
           </section>
 
+          <section className="section" id="games">
+            <h2>🎮 Choose Your Game</h2>
+            <p className="muted">
+              Apna game select karo aur available tournaments dekho.
+            </p>
+
+            <div className="game-grid">
+              <button
+                type="button"
+                className={`game-card ${selectedGame === 'All Games' ? 'selected' : ''}`}
+                onClick={() => setSelectedGame('All Games')}
+              >
+                <span className="game-icon all-icon">🎮</span>
+                <strong>All Games</strong>
+                <small>All tournaments</small>
+              </button>
+
+              {games.map((game) => (
+                <button
+                  type="button"
+                  key={game.name}
+                  className={`game-card ${selectedGame === game.name ? 'selected' : ''}`}
+                  style={{ '--game-color': game.color } as React.CSSProperties}
+                  onClick={() => setSelectedGame(game.name)}
+                >
+                  <span className="game-icon">{game.icon}</span>
+                  <strong>{game.name}</strong>
+                  <small>{game.description}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+
           <section className="section" id="tournaments">
             <h2>🔥 Featured Tournaments</h2>
             <p className="muted">
-              Explore the featured Hancy Arena tournaments.
+              {selectedGame === 'All Games'
+                ? 'All games ke tournaments yahan dekho.'
+                : `${selectedGame} ke tournaments`}
             </p>
+
             <div className="grid">
-              {events.map((event) => (
-                <div className="panel card" key={event.name}>
-                  <span className="status">OPEN</span>
-                  <h3>{event.name}</h3>
-                  <p className="muted">{event.type}</p>
-                  <b>Entry: {event.entry}</b>
-                  <p className="muted">Prize Pool: {event.prize}</p>
-                  <a
-                    className="btn"
-                    href="#login"
-                    onClick={() => openAuth('login')}
-                  >
-                    Register
-                  </a>
+              {filteredEvents.map((event) => {
+                const game = games.find((g) => g.name === event.game);
+
+                return (
+                  <div className="panel card" key={event.name}>
+                    <span className="status">OPEN</span>
+                    <div className="event-game">
+                      <span>{game?.icon ?? '🎮'}</span>
+                      <small>{event.game}</small>
+                    </div>
+                    <h3>{event.name}</h3>
+                    <p className="muted">{event.mode}</p>
+                    <b>Entry: {event.entry}</b>
+                    <p className="muted">Prize Pool: {event.prize}</p>
+                    <a className="btn" href="#login">Register</a>
+                  </div>
+                );
+              })}
+
+              {filteredEvents.length === 0 && (
+                <div className="panel card">
+                  <h3>Abhi tournament available nahi hai.</h3>
+                  <p className="muted">Baad mein dobara check karo.</p>
                 </div>
-              ))}
+              )}
             </div>
           </section>
 
@@ -568,167 +211,164 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td>1</td>
-                    <td>Hancy Warriors</td>
-                    <td>8</td>
-                    <td>240</td>
-                  </tr>
-                  <tr>
-                    <td>2</td>
-                    <td>Shadow Five</td>
-                    <td>7</td>
-                    <td>210</td>
-                  </tr>
-                  <tr>
-                    <td>3</td>
-                    <td>Nova Squad</td>
-                    <td>6</td>
-                    <td>185</td>
-                  </tr>
+                  <tr><td>1</td><td>Hancy Warriors</td><td>8</td><td>240</td></tr>
+                  <tr><td>2</td><td>Shadow Five</td><td>7</td><td>210</td></tr>
+                  <tr><td>3</td><td>Nova Squad</td><td>6</td><td>185</td></tr>
                 </tbody>
               </table>
             </div>
           </section>
 
           <section className="section" id="login">
-            <h2>
-              {mode === 'signup' && '📝 Create Account'}
-              {mode === 'login' && '🔐 Login to Hancy Arena'}
-              {mode === 'forgot' && '🔑 Forgot Password'}
-              {mode === 'reset' && '🔒 Set New Password'}
-            </h2>
-
+            <h2>🔐 Create Account</h2>
             <p className="muted">
-              {mode === 'signup' && 'Create your player account.'}
-              {mode === 'login' && 'Welcome back! Log in to open your dashboard.'}
-              {mode === 'forgot' && 'We will send a password reset link to your email.'}
-              {mode === 'reset' && 'Enter a new password for your account.'}
+              Apna account banao aur tournament registration shuru karo.
             </p>
 
             <div className="panel">
-              <form className="form" onSubmit={handleAuth}>
-                {mode !== 'reset' && (
-                  <input
-                    type="email"
-                    placeholder="Email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    autoComplete="email"
-                    required
-                  />
-                )}
-
-                {(mode === 'signup' || mode === 'login') && (
-                  <input
-                    type="password"
-                    placeholder="Password (minimum 6 characters)"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    minLength={6}
-                    autoComplete={
-                      mode === 'signup' ? 'new-password' : 'current-password'
-                    }
-                    required
-                  />
-                )}
-
-                {mode === 'reset' && (
-                  <input
-                    type="password"
-                    placeholder="New password (minimum 6 characters)"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    minLength={6}
-                    autoComplete="new-password"
-                    required
-                  />
-                )}
-
+              <form className="form" onSubmit={signup}>
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+                <input
+                  type="password"
+                  placeholder="Password (minimum 6 characters)"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  minLength={6}
+                  required
+                />
                 <button className="btn" disabled={busy}>
-                  {busy
-                    ? 'Please wait...'
-                    : mode === 'signup'
-                      ? 'Create Account'
-                      : mode === 'login'
-                        ? 'Login'
-                        : mode === 'forgot'
-                          ? 'Send Reset Link'
-                          : 'Update Password'}
+                  {busy ? 'Creating...' : 'Create Account'}
                 </button>
 
                 {msg && (
-                  <p
-                    role="status"
-                    style={{
-                      marginTop: '14px',
-                      color:
-                        /successful|sent!|created!|updated successfully|welcome/i.test(
-                          msg
-                        )
-                          ? '#4ade80'
-                          : '#f87171',
-                    }}
+                  <div
+                    className={
+                      msg.toLowerCase().includes('error') ||
+                      msg.toLowerCase().includes('missing')
+                        ? 'msg err'
+                        : 'msg'
+                    }
                   >
                     {msg}
-                  </p>
+                  </div>
                 )}
               </form>
-
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: '10px',
-                  marginTop: '16px',
-                }}
-              >
-                {mode !== 'login' && mode !== 'reset' && (
-                  <button
-                    type="button"
-                    className="btn alt"
-                    onClick={() => openAuth('login')}
-                  >
-                    Login
-                  </button>
-                )}
-
-                {mode !== 'signup' && mode !== 'reset' && (
-                  <button
-                    type="button"
-                    className="btn alt"
-                    onClick={() => openAuth('signup')}
-                  >
-                    Create Account
-                  </button>
-                )}
-
-                {mode === 'login' && (
-                  <button
-                    type="button"
-                    className="btn alt"
-                    onClick={() => openAuth('forgot')}
-                  >
-                    Forgot Password?
-                  </button>
-                )}
-
-                {mode === 'reset' && (
-                  <button
-                    type="button"
-                    className="btn alt"
-                    onClick={() => openAuth('login')}
-                  >
-                    Back to Login
-                  </button>
-                )}
-              </div>
             </div>
           </section>
         </div>
       </main>
 
       <footer>© 2026 Hancy Arena • MLBB Tournament Platform</footer>
+
+      <style jsx>{`
+        .game-grid {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 14px;
+          margin-top: 22px;
+        }
+
+        .game-card {
+          --game-color: #7257ff;
+          min-width: 0;
+          padding: 18px 10px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 16px;
+          background: rgba(20, 24, 42, 0.9);
+          color: inherit;
+          text-align: center;
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 9px;
+          transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .game-card:hover {
+          transform: translateY(-3px);
+          border-color: var(--game-color);
+        }
+
+        .game-card.selected {
+          border: 2px solid var(--game-color);
+          box-shadow: 0 0 18px color-mix(in srgb, var(--game-color) 45%, transparent);
+          background: rgba(40, 35, 75, 0.75);
+        }
+
+        .game-icon {
+          width: 58px;
+          height: 58px;
+          border-radius: 15px;
+          display: grid;
+          place-items: center;
+          font-size: 32px;
+          background: color-mix(in srgb, var(--game-color) 20%, #111522);
+          border: 1px solid color-mix(in srgb, var(--game-color) 65%, transparent);
+        }
+
+        .all-icon {
+          --game-color: #ffffff;
+        }
+
+        .game-card strong {
+          font-size: 13px;
+        }
+
+        .game-card small {
+          font-size: 11px;
+          opacity: 0.7;
+        }
+
+        .event-game {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 12px;
+          font-size: 22px;
+        }
+
+        .event-game small {
+          font-size: 12px;
+          opacity: 0.75;
+        }
+
+        .hero-panel {
+          text-align: center;
+          padding: 28px;
+        }
+
+        .hero-icons {
+          display: flex;
+          justify-content: center;
+          gap: 14px;
+          margin-top: 20px;
+          font-size: 27px;
+        }
+
+        @media (max-width: 700px) {
+          .game-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+          }
+
+          .game-card {
+            padding: 15px 8px;
+          }
+
+          .game-icon {
+            width: 52px;
+            height: 52px;
+            font-size: 28px;
+          }
+        }
+      `}</style>
     </>
   );
 }
