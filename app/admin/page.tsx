@@ -1,859 +1,556 @@
 
-"use client";
+'use client';
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from 'react';
+import { supabaseBrowser } from '../../lib/supabase';
 
-type TeamFormat = "Solo" | "Duo" | "Squad";
+type GameResult = {
+  id: string;
+  registration_id: string;
+  tournament_id: string;
+  user_id: string;
+  screenshot_path: string;
+  notes: string;
+  status: 'pending' | 'approved' | 'rejected';
+  winner_name: string | null;
+  admin_note: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+};
 
 type Tournament = {
   id: string;
   name: string;
-  date: string;
-  time: string;
-  game: string;
-  mode: string;
-  teamFormat: TeamFormat;
-  maxTeams: number;
-  entryFee: number;
-  prizePool: number;
-  details: string;
+  game_name?: string | null;
 };
 
 type Registration = {
   id: string;
-  tournamentId: string;
-  teamName: string;
-  captain: string;
-  gameId: string;
+  team_name: string | null;
+  captain_name: string | null;
+  phone?: string | null;
 };
 
-const TOURNAMENTS_KEY = "hancy-arena-tournaments";
-const REGISTRATIONS_KEY = "hancy-arena-registrations";
-
-const GAMES = [
-  "Mobile Legends: Bang Bang",
-  "PUBG Mobile",
-  "Free Fire",
-  "Ludo",
-];
-
-const GAME_MODES: Record<string, string[]> = {
-  "Mobile Legends: Bang Bang": [
-    "Classic",
-    "Ranked",
-    "Custom Lobby",
-    "Draft Pick",
-  ],
-  "PUBG Mobile": [
-    "Solo",
-    "Duo",
-    "Squad",
-    "Custom Room",
-  ],
-  "Free Fire": [
-    "Solo",
-    "Duo",
-    "Squad",
-    "Custom Room",
-  ],
-  "Ludo": [
-    "1v1",
-    "2 Players",
-    "4 Players",
-  ],
+type ReviewItem = {
+  result: GameResult;
+  tournamentName: string;
+  gameName: string;
+  teamName: string;
+  captainName: string;
+  phone: string;
+  screenshotUrl: string;
 };
 
 export default function AdminPage() {
-  const [tournaments, setTournaments] = useState<Tournament[]>([]);
-  const [registrations, setRegistrations] = useState<Registration[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [items, setItems] = useState<ReviewItem[]>([]);
+  const [winnerNames, setWinnerNames] = useState<Record<string, string>>({});
+  const [adminNotes, setAdminNotes] = useState<Record<string, string>>({});
+  const [busyId, setBusyId] = useState('');
+  const [message, setMessage] = useState('');
+  const [filter, setFilter] = useState('pending');
 
-  const [name, setName] = useState("");
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
-  const [game, setGame] = useState(GAMES[0]);
-  const [mode, setMode] = useState(GAME_MODES[GAMES[0]][0]);
-  const [teamFormat, setTeamFormat] = useState<TeamFormat>("Squad");
-  const [maxTeams, setMaxTeams] = useState("16");
-  const [entryFee, setEntryFee] = useState("100");
-  const [prizePool, setPrizePool] = useState("1000");
-  const [details, setDetails] = useState("");
-
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    try {
-      const savedTournaments = localStorage.getItem(TOURNAMENTS_KEY);
-      const savedRegistrations = localStorage.getItem(REGISTRATIONS_KEY);
-
-      if (savedTournaments) {
-        const parsed: unknown = JSON.parse(savedTournaments);
-        if (Array.isArray(parsed)) {
-          setTournaments(parsed as Tournament[]);
-        }
-      }
-
-      if (savedRegistrations) {
-        const parsed: unknown = JSON.parse(savedRegistrations);
-        if (Array.isArray(parsed)) {
-          setRegistrations(parsed as Registration[]);
-        }
-      }
-    } catch {
-      setError("Saved data load nahi hua.");
-    } finally {
-      setLoaded(true);
+  const loadResults = useCallback(async () => {
+    const supabase = supabaseBrowser();
+    if (!supabase) {
+      setMessage('Supabase environment variables missing hain.');
+      setChecking(false);
+      return;
     }
+
+    setChecking(true);
+    setMessage('');
+
+    const { data: sessionData, error: sessionError } =
+      await supabase.auth.getSession();
+
+    const user = sessionData.session?.user;
+
+    if (sessionError || !user) {
+      setAuthorized(false);
+      setMessage('Admin Panel kholne ke liye pehle admin account se login karo.');
+      setChecking(false);
+      return;
+    }
+
+    const { data: adminRow, error: adminError } = await supabase
+      .from('admins')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (adminError || !adminRow) {
+      setAuthorized(false);
+      setMessage('Access denied. Is login ko admins table mein add nahi kiya gaya hai.');
+      setChecking(false);
+      return;
+    }
+
+    setAuthorized(true);
+
+    const { data: rows, error } = await supabase
+      .from('game_results')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      setMessage('Results load nahi hue: ' + error.message);
+      setChecking(false);
+      return;
+    }
+
+    const results = (rows || []) as GameResult[];
+
+    if (results.length === 0) {
+      setItems([]);
+      setChecking(false);
+      return;
+    }
+
+    const tournamentIds = [...new Set(results.map((r) => r.tournament_id))];
+    const registrationIds = [...new Set(results.map((r) => r.registration_id))];
+
+    const [{ data: tournamentRows }, { data: registrationRows }] =
+      await Promise.all([
+        supabase
+          .from('tournaments')
+          .select('id, name, game_name')
+          .in('id', tournamentIds),
+        supabase
+          .from('registrations')
+          .select('id, team_name, captain_name, phone')
+          .in('id', registrationIds),
+      ]);
+
+    const tournamentMap = new Map(
+      ((tournamentRows || []) as Tournament[]).map((t) => [t.id, t])
+    );
+
+    const registrationMap = new Map(
+      ((registrationRows || []) as Registration[]).map((r) => [r.id, r])
+    );
+
+    const reviewItems = await Promise.all(
+      results.map(async (result) => {
+        const { data: signedData, error: signedError } = await supabase.storage
+          .from('result-proofs')
+          .createSignedUrl(result.screenshot_path, 600);
+
+        const tournament = tournamentMap.get(result.tournament_id);
+        const registration = registrationMap.get(result.registration_id);
+
+        return {
+          result,
+          tournamentName: tournament?.name || 'Tournament',
+          gameName: tournament?.game_name || '',
+          teamName: registration?.team_name || 'Not provided',
+          captainName: registration?.captain_name || 'Not provided',
+          phone: registration?.phone || 'Not provided',
+          screenshotUrl: signedError ? '' : signedData?.signedUrl || '',
+        };
+      })
+    );
+
+    setItems(reviewItems);
+
+    setWinnerNames((previous) => {
+      const next = { ...previous };
+      for (const item of reviewItems) {
+        if (next[item.result.id] === undefined) {
+          next[item.result.id] = item.result.winner_name || '';
+        }
+      }
+      return next;
+    });
+
+    setAdminNotes((previous) => {
+      const next = { ...previous };
+      for (const item of reviewItems) {
+        if (next[item.result.id] === undefined) {
+          next[item.result.id] = item.result.admin_note || '';
+        }
+      }
+      return next;
+    });
+
+    setChecking(false);
   }, []);
 
   useEffect(() => {
-    if (!loaded) return;
+    loadResults().catch((error) => {
+      setMessage(error instanceof Error ? error.message : 'Unexpected error.');
+      setChecking(false);
+    });
+  }, [loadResults]);
 
-    try {
-      localStorage.setItem(
-        TOURNAMENTS_KEY,
-        JSON.stringify(tournaments)
-      );
-    } catch {
-      setError("Tournament save nahi hua. Browser storage check karo.");
-    }
-  }, [tournaments, loaded]);
+  async function reviewResult(item: ReviewItem, decision: 'approved' | 'rejected') {
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
 
-  useEffect(() => {
-    if (!loaded) return;
+    const result = item.result;
+    const winner = (winnerNames[result.id] || '').trim();
+    const note = (adminNotes[result.id] || '').trim();
 
-    try {
-      localStorage.setItem(
-        REGISTRATIONS_KEY,
-        JSON.stringify(registrations)
-      );
-    } catch {
-      setError("Registration save nahi hua. Browser storage check karo.");
-    }
-  }, [registrations, loaded]);
-
-  function handleGameChange(newGame: string) {
-    setGame(newGame);
-    setMode(GAME_MODES[newGame][0]);
-  }
-
-  function createTournament(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setMessage("");
-    setError("");
-
-    if (!name.trim() || !date || !time) {
-      setError("Tournament name, date aur time zaroor bharo.");
+    if (decision === 'approved' && !winner) {
+      setMessage('Approve karne se pehle winner ka naam likho.');
       return;
     }
 
-    const parsedDate = new Date(`${date}T${time}`);
+    setBusyId(result.id);
+    setMessage('');
 
-    if (Number.isNaN(parsedDate.getTime())) {
-      setError("Valid date aur time select karo.");
+    const { error } = await supabase
+      .from('game_results')
+      .update({
+        status: decision,
+        winner_name: decision === 'approved' ? winner : null,
+        admin_note: note || null,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', result.id);
+
+    if (error) {
+      setMessage('Result update nahi hua: ' + error.message);
+      setBusyId('');
       return;
     }
 
-    const max = Number(maxTeams);
-    const fee = Number(entryFee);
-    const prize = Number(prizePool);
-
-    if (!Number.isInteger(max) || max < 1 || max > 256) {
-      setError("Maximum teams 1 se 256 ke beech rakho.");
-      return;
-    }
-
-    if (
-      !Number.isFinite(fee) ||
-      fee < 0 ||
-      !Number.isFinite(prize) ||
-      prize < 0
-    ) {
-      setError("Entry fee aur prize pool valid rakho.");
-      return;
-    }
-
-    const tournament: Tournament = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: name.trim(),
-      date,
-      time,
-      game,
-      mode,
-      teamFormat,
-      maxTeams: max,
-      entryFee: fee,
-      prizePool: prize,
-      details: details.trim(),
-    };
-
-    setTournaments((previous) => [tournament, ...previous]);
-
-    setName("");
-    setDate("");
-    setTime("");
-    setDetails("");
-    setMessage(`${game} tournament successfully create ho gaya!`);
-  }
-
-  function joinTournament(
-    event: FormEvent<HTMLFormElement>,
-    tournament: Tournament
-  ) {
-    event.preventDefault();
-    setMessage("");
-    setError("");
-
-    const form = new FormData(event.currentTarget);
-    const teamName = String(form.get("teamName") || "").trim();
-    const captain = String(form.get("captain") || "").trim();
-    const gameId = String(form.get("gameId") || "").trim();
-
-    if (!teamName || !captain || !gameId) {
-      setError("Team/player name aur Game ID bharo.");
-      return;
-    }
-
-    const currentCount = registrations.filter(
-      (registration) => registration.tournamentId === tournament.id
-    ).length;
-
-    if (currentCount >= tournament.maxTeams) {
-      setError("Is tournament ki saari slots fill ho chuki hain.");
-      return;
-    }
-
-    const alreadyJoined = registrations.some(
-      (registration) =>
-        registration.tournamentId === tournament.id &&
-        registration.gameId.toLowerCase() === gameId.toLowerCase()
+    setMessage(
+      decision === 'approved'
+        ? 'Result approve ho gaya aur winner publish ho gaya!'
+        : 'Result reject kar diya gaya.'
     );
 
-    if (alreadyJoined) {
-      setError("Ye Game ID pehle hi register ho chuki hai.");
-      return;
-    }
-
-    const registration: Registration = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      tournamentId: tournament.id,
-      teamName,
-      captain,
-      gameId,
-    };
-
-    setRegistrations((previous) => [...previous, registration]);
-    setMessage(`Join request save ho gayi: ${tournament.name}`);
-    event.currentTarget.reset();
+    await loadResults();
+    setBusyId('');
   }
 
-  function deleteTournament(id: string) {
-    if (!window.confirm("Kya tum ye tournament delete karna chahte ho?")) {
-      return;
-    }
+  const filteredItems =
+    filter === 'all' ? items : items.filter((item) => item.result.status === filter);
 
-    setTournaments((previous) =>
-      previous.filter((tournament) => tournament.id !== id)
-    );
-
-    setRegistrations((previous) =>
-      previous.filter((registration) => registration.tournamentId !== id)
-    );
-
-    setMessage("Tournament delete ho gaya.");
-    setError("");
-  }
-
-  if (!loaded) {
-    return (
-      <main className="page">
-        <p>Hancy Arena load ho raha hai...</p>
-      </main>
-    );
-  }
+  const count = (status: string) =>
+    items.filter((item) => item.result.status === status).length;
 
   return (
-    <main className="page">
-      <header className="header">
-        <div>
-          <p className="eyebrow">MULTI-GAME TOURNAMENT PLATFORM</p>
-          <h1>Hancy Arena</h1>
-          <p className="muted">Tournament Admin Dashboard</p>
-        </div>
+    <main style={pageStyle}>
+      <div style={{ maxWidth: 1050, margin: '0 auto' }}>
+        <a href="/" style={{ color: '#60a5fa', textDecoration: 'none' }}>
+          ← Hancy Arena Home
+        </a>
 
-        <div className="stats">
-          <div className="stat">
-            <strong>{tournaments.length}</strong>
-            <span>Tournaments</span>
-          </div>
-          <div className="stat">
-            <strong>{registrations.length}</strong>
-            <span>Registrations</span>
-          </div>
-        </div>
-      </header>
+        <h1 style={{ fontSize: 32, marginBottom: 6 }}>Hancy Arena Admin</h1>
+        <p style={{ color: '#aab4c5', marginTop: 0 }}>
+          Screenshot review, result approval aur winner management.
+        </p>
 
-      {message && <p className="success">{message}</p>}
-      {error && <p className="error">{error}</p>}
-
-      <section className="panel">
-        <h2>🏆 Create Tournament</h2>
-
-        <form className="form" onSubmit={createTournament}>
-          <label>
-            Tournament Name
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Hancy Arena Cup"
-              required
-            />
-          </label>
-
-          <div className="two">
-            <label>
-              Tournament Date
-              <input
-                type="date"
-                value={date}
-                onChange={(event) => setDate(event.target.value)}
-                required
-              />
-            </label>
-
-            <label>
-              Tournament Time
-              <input
-                type="time"
-                value={time}
-                onChange={(event) => setTime(event.target.value)}
-                step={60}
-                required
-              />
-            </label>
-          </div>
-
-          <label>
-            Game Select Karo
-            <select
-              value={game}
-              onChange={(event) => handleGameChange(event.target.value)}
-            >
-              {GAMES.map((gameOption) => (
-                <option key={gameOption} value={gameOption}>
-                  {gameOption}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="two">
-            <label>
-              Game Mode
-              <select
-                value={mode}
-                onChange={(event) => setMode(event.target.value)}
-              >
-                {GAME_MODES[game].map((modeOption) => (
-                  <option key={modeOption} value={modeOption}>
-                    {modeOption}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              Team Format
-              <select
-                value={teamFormat}
-                onChange={(event) =>
-                  setTeamFormat(event.target.value as TeamFormat)
-                }
-              >
-                <option value="Solo">Solo - 1 Player</option>
-                <option value="Duo">Duo - 2 Players</option>
-                <option value="Squad">Squad - 5 Players</option>
-              </select>
-            </label>
-          </div>
-
-          <div className="three">
-            <label>
-              Maximum Teams / Entries
-              <input
-                type="number"
-                min="1"
-                max="256"
-                value={maxTeams}
-                onChange={(event) => setMaxTeams(event.target.value)}
-                required
-              />
-            </label>
-
-            <label>
-              Entry Fee (NPR)
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={entryFee}
-                onChange={(event) => setEntryFee(event.target.value)}
-                required
-              />
-            </label>
-
-            <label>
-              Prize Pool (NPR)
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={prizePool}
-                onChange={(event) => setPrizePool(event.target.value)}
-                required
-              />
-            </label>
-          </div>
-
-          <label>
-            Tournament Details / Rules
-            <textarea
-              value={details}
-              onChange={(event) => setDetails(event.target.value)}
-              placeholder="Rules, room details, match format, player instructions..."
-              rows={3}
-            />
-          </label>
-
-          <button type="submit">+ Create Tournament</button>
-        </form>
-      </section>
-
-      <section className="panel">
-        <h2>🎮 Available Tournaments</h2>
-
-        {tournaments.length === 0 ? (
-          <p className="muted">
-            Abhi koi tournament nahi hai. Pehle ek create karo.
-          </p>
+        {checking ? (
+          <p>Admin access aur results check ho rahe hain...</p>
+        ) : !authorized ? (
+          <section style={panelStyle}>
+            <h2>Admin access required</h2>
+            <p>{message || 'Admin account se login karo.'}</p>
+            <a href="/" style={{ color: '#60a5fa' }}>
+              Website par jao aur login karo
+            </a>
+          </section>
         ) : (
-          <div className="tournamentList">
-            {tournaments.map((tournament) => {
-              const joined = registrations.filter(
-                (registration) =>
-                  registration.tournamentId === tournament.id
-              );
+          <>
+            <div style={statsGrid}>
+              <Stat label="Pending" value={count('pending')} />
+              <Stat label="Approved" value={count('approved')} />
+              <Stat label="Rejected" value={count('rejected')} />
+              <Stat label="Total" value={items.length} />
+            </div>
 
-              const full = joined.length >= tournament.maxTeams;
+            <section style={panelStyle}>
+              <label htmlFor="filter" style={{ display: 'block' }}>
+                Filter submissions
+              </label>
+              <select
+                id="filter"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="pending">Pending review</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="all">All submissions</option>
+              </select>
 
-              return (
-                <article className="tournament" key={tournament.id}>
-                  <div className="tournamentHeader">
-                    <div>
-                      <span className="tag">{tournament.game}</span>
-                      <h3>{tournament.name}</h3>
+              <button onClick={() => loadResults()} style={secondaryButton}>
+                Refresh results
+              </button>
+            </section>
+
+            {message && (
+              <p role="status" style={{ color: '#86efac', overflowWrap: 'anywhere' }}>
+                {message}
+              </p>
+            )}
+
+            {filteredItems.length === 0 ? (
+              <section style={panelStyle}>
+                <p>Is filter mein koi submissions nahi hain.</p>
+              </section>
+            ) : (
+              filteredItems.map((item) => {
+                const result = item.result;
+
+                return (
+                  <section key={result.id} style={panelStyle}>
+                    <div style={headerRow}>
+                      <div>
+                        <h2 style={{ margin: '0 0 6px' }}>
+                          {item.tournamentName}
+                        </h2>
+                        <p style={{ color: '#aab4c5', margin: 0 }}>
+                          {item.gameName || 'Game not specified'}
+                        </p>
+                      </div>
+                      <span style={statusStyle(result.status)}>
+                        {result.status.toUpperCase()}
+                      </span>
                     </div>
 
-                    <button
-                      type="button"
-                      className="delete"
-                      onClick={() => deleteTournament(tournament.id)}
+                    <div style={detailsGrid}>
+                      <p><strong>Team:</strong> {item.teamName}</p>
+                      <p><strong>Captain:</strong> {item.captainName}</p>
+                      <p><strong>Contact:</strong> {item.phone}</p>
+                      <p>
+                        <strong>Submitted:</strong>{' '}
+                        {new Date(result.created_at).toLocaleString()}
+                      </p>
+                    </div>
+
+                    {result.notes && (
+                      <p>
+                        <strong>Player notes:</strong> {result.notes}
+                      </p>
+                    )}
+
+                    <h3>Match screenshot proof</h3>
+                    {item.screenshotUrl ? (
+                      <a
+                        href={item.screenshotUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: '#60a5fa' }}
+                      >
+                        <img
+                          src={item.screenshotUrl}
+                          alt="Player submitted match screenshot"
+                          style={{
+                            display: 'block',
+                            width: '100%',
+                            maxWidth: 650,
+                            maxHeight: 480,
+                            objectFit: 'contain',
+                            objectPosition: 'left',
+                            background: '#080c14',
+                            borderRadius: 10,
+                            border: '1px solid #39465d',
+                          }}
+                        />
+                        Open full-size screenshot
+                      </a>
+                    ) : (
+                      <p style={{ color: '#fca5a5' }}>
+                        Screenshot preview load nahi hua. Storage policy aur file path check karo.
+                      </p>
+                    )}
+
+                    <label
+                      htmlFor={`winner-${result.id}`}
+                      style={{ display: 'block', marginTop: 20 }}
                     >
-                      Delete
-                    </button>
-                  </div>
-
-                  <div className="infoGrid">
-                    <p>
-                      <span>Date</span>
-                      <strong>{tournament.date}</strong>
-                    </p>
-                    <p>
-                      <span>Time</span>
-                      <strong>{tournament.time}</strong>
-                    </p>
-                    <p>
-                      <span>Game Mode</span>
-                      <strong>{tournament.mode}</strong>
-                    </p>
-                    <p>
-                      <span>Format</span>
-                      <strong>{tournament.teamFormat}</strong>
-                    </p>
-                    <p>
-                      <span>Entry Fee</span>
-                      <strong>NPR {tournament.entryFee}</strong>
-                    </p>
-                    <p>
-                      <span>Prize Pool</span>
-                      <strong>NPR {tournament.prizePool}</strong>
-                    </p>
-                    <p>
-                      <span>Team Slots / Entries</span>
-                      <strong>
-                        {joined.length} / {tournament.maxTeams}
-                      </strong>
-                    </p>
-                  </div>
-
-                  {tournament.details && (
-                    <p className="details">{tournament.details}</p>
-                  )}
-
-                  <div className="slotTrack">
-                    <div
-                      className="slotFill"
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          (joined.length / tournament.maxTeams) * 100
-                        )}%`,
-                      }}
+                      Winner name (approval ke liye required)
+                    </label>
+                    <input
+                      id={`winner-${result.id}`}
+                      value={winnerNames[result.id] || ''}
+                      onChange={(e) =>
+                        setWinnerNames((previous) => ({
+                          ...previous,
+                          [result.id]: e.target.value,
+                        }))
+                      }
+                      placeholder="Winning player ya team ka naam"
+                      style={inputStyle}
                     />
-                  </div>
 
-                  <h4>📝 Join This Tournament</h4>
-
-                  {full ? (
-                    <p className="error">Tournament full ho gaya hai.</p>
-                  ) : (
-                    <form
-                      className="form"
-                      onSubmit={(event) => joinTournament(event, tournament)}
+                    <label
+                      htmlFor={`note-${result.id}`}
+                      style={{ display: 'block' }}
                     >
-                      <label>
-                        Team Name / Player Name
-                        <input
-                          name="teamName"
-                          placeholder="Enter team or player name"
-                          required
-                        />
-                      </label>
+                      Admin note (optional)
+                    </label>
+                    <textarea
+                      id={`note-${result.id}`}
+                      value={adminNotes[result.id] || ''}
+                      onChange={(e) =>
+                        setAdminNotes((previous) => ({
+                          ...previous,
+                          [result.id]: e.target.value,
+                        }))
+                      }
+                      placeholder="Review note ya rejection reason..."
+                      rows={3}
+                      style={{ ...inputStyle, resize: 'vertical' }}
+                    />
 
-                      <label>
-                        Captain / Player Name
-                        <input
-                          name="captain"
-                          placeholder="Enter captain or player name"
-                          required
-                        />
-                      </label>
-
-                      <label>
-                        {tournament.game} Game ID
-                        <input
-                          name="gameId"
-                          placeholder="Enter your Game ID"
-                          required
-                        />
-                      </label>
-
-                      <button type="submit">Join Tournament</button>
-                    </form>
-                  )}
-
-                  {joined.length > 0 && (
-                    <details className="registrations">
-                      <summary>
-                        View Registrations ({joined.length})
-                      </summary>
-
-                      {joined.map((registration) => (
-                        <div className="registration" key={registration.id}>
-                          <strong>{registration.teamName}</strong>
-                          <span>Captain / Player: {registration.captain}</span>
-                          <span>Game ID: {registration.gameId}</span>
-                        </div>
-                      ))}
-                    </details>
-                  )}
-                </article>
-              );
-            })}
-          </div>
+                    <div style={buttonRow}>
+                      <button
+                        disabled={busyId === result.id}
+                        onClick={() => reviewResult(item, 'approved')}
+                        style={approveButton}
+                      >
+                        {busyId === result.id ? 'Saving...' : 'Approve & Publish'}
+                      </button>
+                      <button
+                        disabled={busyId === result.id}
+                        onClick={() => reviewResult(item, 'rejected')}
+                        style={rejectButton}
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </section>
+                );
+              })
+            )}
+          </>
         )}
-      </section>
-
-      <footer>Hancy Arena • Multi-Game Tournament Management</footer>
-
-      <style jsx>{`
-        .page {
-          min-height: 100vh;
-          padding: 28px 16px;
-          background: #080d19;
-          color: #f8fafc;
-          font-family: Arial, sans-serif;
-          box-sizing: border-box;
-        }
-
-        .header,
-        .panel {
-          max-width: 950px;
-          width: 100%;
-          margin: 0 auto 24px;
-        }
-
-        .header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 16px;
-          flex-wrap: wrap;
-        }
-
-        .eyebrow {
-          color: #38bdf8;
-          font-size: 12px;
-          letter-spacing: 2px;
-        }
-
-        h1 {
-          margin: 8px 0;
-          font-size: clamp(30px, 5vw, 42px);
-        }
-
-        h2 {
-          margin: 0 0 20px;
-        }
-
-        h3 {
-          margin: 12px 0;
-          overflow-wrap: anywhere;
-        }
-
-        h4 {
-          margin-bottom: 12px;
-        }
-
-        .muted,
-        footer {
-          color: #94a3b8;
-        }
-
-        .stats {
-          display: flex;
-          gap: 10px;
-        }
-
-        .stat {
-          display: grid;
-          gap: 5px;
-          padding: 14px;
-          background: #111b2d;
-          border: 1px solid #26354d;
-          border-radius: 12px;
-        }
-
-        .stat strong {
-          color: #7dd3fc;
-          font-size: 22px;
-        }
-
-        .stat span {
-          color: #94a3b8;
-          font-size: 12px;
-        }
-
-        .panel {
-          box-sizing: border-box;
-          padding: 24px;
-          border: 1px solid #26354d;
-          border-radius: 16px;
-          background: #101827;
-        }
-
-        .form {
-          display: grid;
-          gap: 14px;
-        }
-
-        .two,
-        .three {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 14px;
-        }
-
-        .three {
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
-
-        label {
-          display: grid;
-          gap: 8px;
-          color: #cbd5e1;
-          font-size: 14px;
-        }
-
-        input,
-        select,
-        textarea {
-          box-sizing: border-box;
-          width: 100%;
-          min-width: 0;
-          padding: 12px;
-          border: 1px solid #334155;
-          border-radius: 9px;
-          background: #080d19;
-          color: white;
-          font: inherit;
-          color-scheme: dark;
-        }
-
-        textarea {
-          resize: vertical;
-        }
-
-        button {
-          padding: 13px 16px;
-          border: 0;
-          border-radius: 9px;
-          background: #38bdf8;
-          color: #082f49;
-          font-weight: 700;
-          cursor: pointer;
-        }
-
-        button:hover {
-          filter: brightness(1.08);
-        }
-
-        .success {
-          max-width: 950px;
-          margin: 0 auto 16px;
-          color: #86efac;
-        }
-
-        .error {
-          color: #fca5a5;
-        }
-
-        .tournamentList {
-          display: grid;
-          gap: 18px;
-        }
-
-        .tournament {
-          padding: 18px;
-          border: 1px solid #29394f;
-          border-radius: 14px;
-          background: #0b1220;
-        }
-
-        .tournamentHeader {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 12px;
-        }
-
-        .tag {
-          display: inline-block;
-          padding: 6px 9px;
-          border-radius: 20px;
-          background: #172554;
-          color: #93c5fd;
-          font-size: 12px;
-        }
-
-        .delete {
-          background: #7f1d1d;
-          color: #fecaca;
-          flex-shrink: 0;
-        }
-
-        .infoGrid {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 12px;
-          margin: 18px 0;
-        }
-
-        .infoGrid p {
-          display: grid;
-          gap: 7px;
-          margin: 0;
-          overflow-wrap: anywhere;
-        }
-
-        .infoGrid span,
-        .registration span {
-          color: #94a3b8;
-          font-size: 12px;
-        }
-
-        .details {
-          color: #cbd5e1;
-          white-space: pre-wrap;
-          overflow-wrap: anywhere;
-        }
-
-        .slotTrack {
-          height: 7px;
-          overflow: hidden;
-          border-radius: 10px;
-          background: #263449;
-        }
-
-        .slotFill {
-          height: 100%;
-          background: #38bdf8;
-          transition: width 0.2s ease;
-        }
-
-        .registrations {
-          margin-top: 18px;
-          padding-top: 14px;
-          border-top: 1px solid #29394f;
-        }
-
-        .registrations summary {
-          cursor: pointer;
-          color: #7dd3fc;
-        }
-
-        .registration {
-          display: grid;
-          gap: 5px;
-          margin-top: 12px;
-          padding: 12px;
-          border-radius: 9px;
-          background: #111b2d;
-          overflow-wrap: anywhere;
-        }
-
-        footer {
-          max-width: 950px;
-          margin: 28px auto 0;
-          text-align: center;
-          font-size: 12px;
-        }
-
-        @media (max-width: 620px) {
-          .panel {
-            padding: 16px;
-          }
-
-          .two,
-          .three,
-          .infoGrid {
-            grid-template-columns: 1fr;
-          }
-
-          .tournamentHeader {
-            align-items: flex-start;
-          }
-
-          .stats {
-            width: 100%;
-          }
-
-          .stat {
-            flex: 1;
-          }
-        }
-      `}</style>
+      </div>
     </main>
   );
 }
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div style={statStyle}>
+      <div style={{ color: '#aab4c5', fontSize: 14 }}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>{value}</div>
+    </div>
+  );
+}
+
+function statusStyle(status: string) {
+  const color =
+    status === 'approved'
+      ? '#86efac'
+      : status === 'rejected'
+        ? '#fca5a5'
+        : '#fde68a';
+
+  return {
+    color,
+    background: '#0b1220',
+    border: `1px solid ${color}`,
+    borderRadius: 20,
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 700,
+    whiteSpace: 'nowrap' as const,
+  };
+}
+
+const pageStyle = {
+  minHeight: '100vh',
+  background: '#090d18',
+  color: '#f8fafc',
+  padding: '32px 16px',
+  fontFamily: 'Arial, sans-serif',
+};
+
+const panelStyle = {
+  background: '#121a2a',
+  border: '1px solid #273449',
+  borderRadius: 14,
+  padding: 20,
+  marginTop: 18,
+  overflowWrap: 'anywhere' as const,
+};
+
+const inputStyle = {
+  display: 'block',
+  width: '100%',
+  boxSizing: 'border-box' as const,
+  marginTop: 8,
+  marginBottom: 16,
+  padding: 12,
+  borderRadius: 8,
+  border: '1px solid #39465d',
+  background: '#0b1220',
+  color: '#f8fafc',
+  fontSize: 15,
+};
+
+const statsGrid = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+  gap: 12,
+  marginTop: 22,
+};
+
+const statStyle = {
+  background: '#121a2a',
+  border: '1px solid #273449',
+  borderRadius: 12,
+  padding: 16,
+};
+
+const headerRow = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  gap: 12,
+  flexWrap: 'wrap' as const,
+};
+
+const detailsGrid = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+  gap: '0 16px',
+  color: '#d1d9e6',
+  marginTop: 12,
+};
+
+const buttonRow = {
+  display: 'flex',
+  gap: 12,
+  flexWrap: 'wrap' as const,
+  marginTop: 18,
+};
+
+const approveButton = {
+  flex: '1 1 220px',
+  padding: 13,
+  border: 0,
+  borderRadius: 8,
+  background: '#15803d',
+  color: '#fff',
+  fontWeight: 700,
+  cursor: 'pointer',
+};
+
+const rejectButton = {
+  flex: '1 1 120px',
+  padding: 13,
+  border: 0,
+  borderRadius: 8,
+  background: '#b91c1c',
+  color: '#fff',
+  fontWeight: 700,
+  cursor: 'pointer',
+};
+
+const secondaryButton = {
+  padding: 12,
+  border: '1px solid #39465d',
+  borderRadius: 8,
+  background: '#202b3d',
+  color: '#fff',
+  cursor: 'pointer',
+};
