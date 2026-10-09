@@ -30,6 +30,39 @@ type Registration = {
 const TOURNAMENTS_KEY = "hancy-arena-tournaments";
 const REGISTRATIONS_KEY = "hancy-arena-registrations";
 
+const GAMES = [
+  "Mobile Legends: Bang Bang",
+  "PUBG Mobile",
+  "Free Fire",
+  "Ludo",
+];
+
+const GAME_MODES: Record<string, string[]> = {
+  "Mobile Legends: Bang Bang": [
+    "Classic",
+    "Ranked",
+    "Custom Lobby",
+    "Draft Pick",
+  ],
+  "PUBG Mobile": [
+    "Solo",
+    "Duo",
+    "Squad",
+    "Custom Room",
+  ],
+  "Free Fire": [
+    "Solo",
+    "Duo",
+    "Squad",
+    "Custom Room",
+  ],
+  "Ludo": [
+    "1v1",
+    "2 Players",
+    "4 Players",
+  ],
+};
+
 export default function AdminPage() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
@@ -38,8 +71,8 @@ export default function AdminPage() {
   const [name, setName] = useState("");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
-  const [game, setGame] = useState("Mobile Legends: Bang Bang");
-  const [mode, setMode] = useState("Classic");
+  const [game, setGame] = useState(GAMES[0]);
+  const [mode, setMode] = useState(GAME_MODES[GAMES[0]][0]);
   const [teamFormat, setTeamFormat] = useState<TeamFormat>("Squad");
   const [maxTeams, setMaxTeams] = useState("16");
   const [entryFee, setEntryFee] = useState("100");
@@ -76,6 +109,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!loaded) return;
+
     try {
       localStorage.setItem(
         TOURNAMENTS_KEY,
@@ -88,6 +122,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!loaded) return;
+
     try {
       localStorage.setItem(
         REGISTRATIONS_KEY,
@@ -97,6 +132,11 @@ export default function AdminPage() {
       setError("Registration save nahi hua. Browser storage check karo.");
     }
   }, [registrations, loaded]);
+
+  function handleGameChange(newGame: string) {
+    setGame(newGame);
+    setMode(GAME_MODES[newGame][0]);
+  }
 
   function createTournament(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -119,8 +159,8 @@ export default function AdminPage() {
     const fee = Number(entryFee);
     const prize = Number(prizePool);
 
-    if (!Number.isInteger(max) || max < 1) {
-      setError("Maximum teams kam se kam 1 honi chahiye.");
+    if (!Number.isInteger(max) || max < 1 || max > 256) {
+      setError("Maximum teams 1 se 256 ke beech rakho.");
       return;
     }
 
@@ -154,7 +194,7 @@ export default function AdminPage() {
     setDate("");
     setTime("");
     setDetails("");
-    setMessage("Tournament successfully create ho gaya!");
+    setMessage(`${game} tournament successfully create ho gaya!`);
   }
 
   function joinTournament(
@@ -171,7 +211,7 @@ export default function AdminPage() {
     const gameId = String(form.get("gameId") || "").trim();
 
     if (!teamName || !captain || !gameId) {
-      setError("Team name, captain aur game ID bharo.");
+      setError("Team/player name aur Game ID bharo.");
       return;
     }
 
@@ -191,7 +231,7 @@ export default function AdminPage() {
     );
 
     if (alreadyJoined) {
-      setError("Ye game ID pehle hi register ho chuki hai.");
+      setError("Ye Game ID pehle hi register ho chuki hai.");
       return;
     }
 
@@ -237,7 +277,7 @@ export default function AdminPage() {
     <main className="page">
       <header className="header">
         <div>
-          <p className="eyebrow">MLBB ESPORTS PLATFORM</p>
+          <p className="eyebrow">MULTI-GAME TOURNAMENT PLATFORM</p>
           <h1>Hancy Arena</h1>
           <p className="muted">Tournament Admin Dashboard</p>
         </div>
@@ -295,20 +335,31 @@ export default function AdminPage() {
           </div>
 
           <label>
-            Game
-            <select value={game} onChange={(event) => setGame(event.target.value)}>
-              <option>Mobile Legends: Bang Bang</option>
+            Game Select Karo
+            <select
+              value={game}
+              onChange={(event) => handleGameChange(event.target.value)}
+            >
+              {GAMES.map((gameOption) => (
+                <option key={gameOption} value={gameOption}>
+                  {gameOption}
+                </option>
+              ))}
             </select>
           </label>
 
           <div className="two">
             <label>
               Game Mode
-              <select value={mode} onChange={(event) => setMode(event.target.value)}>
-                <option>Classic</option>
-                <option>Ranked</option>
-                <option>Custom Lobby</option>
-                <option>Draft Pick</option>
+              <select
+                value={mode}
+                onChange={(event) => setMode(event.target.value)}
+              >
+                {GAME_MODES[game].map((modeOption) => (
+                  <option key={modeOption} value={modeOption}>
+                    {modeOption}
+                  </option>
+                ))}
               </select>
             </label>
 
@@ -329,7 +380,7 @@ export default function AdminPage() {
 
           <div className="three">
             <label>
-              Maximum Teams
+              Maximum Teams / Entries
               <input
                 type="number"
                 min="1"
@@ -370,7 +421,7 @@ export default function AdminPage() {
             <textarea
               value={details}
               onChange={(event) => setDetails(event.target.value)}
-              placeholder="Rules, room ID details, match format..."
+              placeholder="Rules, room details, match format, player instructions..."
               rows={3}
             />
           </label>
@@ -383,7 +434,9 @@ export default function AdminPage() {
         <h2>🎮 Available Tournaments</h2>
 
         {tournaments.length === 0 ? (
-          <p className="muted">Abhi koi tournament nahi hai. Pehle ek create karo.</p>
+          <p className="muted">
+            Abhi koi tournament nahi hai. Pehle ek create karo.
+          </p>
         ) : (
           <div className="tournamentList">
             {tournaments.map((tournament) => {
@@ -398,9 +451,10 @@ export default function AdminPage() {
                 <article className="tournament" key={tournament.id}>
                   <div className="tournamentHeader">
                     <div>
-                      <span className="tag">{tournament.teamFormat}</span>
+                      <span className="tag">{tournament.game}</span>
                       <h3>{tournament.name}</h3>
                     </div>
+
                     <button
                       type="button"
                       className="delete"
@@ -424,6 +478,10 @@ export default function AdminPage() {
                       <strong>{tournament.mode}</strong>
                     </p>
                     <p>
+                      <span>Format</span>
+                      <strong>{tournament.teamFormat}</strong>
+                    </p>
+                    <p>
                       <span>Entry Fee</span>
                       <strong>NPR {tournament.entryFee}</strong>
                     </p>
@@ -432,8 +490,10 @@ export default function AdminPage() {
                       <strong>NPR {tournament.prizePool}</strong>
                     </p>
                     <p>
-                      <span>Team Slots</span>
-                      <strong>{joined.length} / {tournament.maxTeams}</strong>
+                      <span>Team Slots / Entries</span>
+                      <strong>
+                        {joined.length} / {tournament.maxTeams}
+                      </strong>
                     </p>
                   </div>
 
@@ -463,10 +523,10 @@ export default function AdminPage() {
                       onSubmit={(event) => joinTournament(event, tournament)}
                     >
                       <label>
-                        Team Name
+                        Team Name / Player Name
                         <input
                           name="teamName"
-                          placeholder="Enter team name"
+                          placeholder="Enter team or player name"
                           required
                         />
                       </label>
@@ -475,16 +535,16 @@ export default function AdminPage() {
                         Captain / Player Name
                         <input
                           name="captain"
-                          placeholder="Enter captain name"
+                          placeholder="Enter captain or player name"
                           required
                         />
                       </label>
 
                       <label>
-                        MLBB Game ID
+                        {tournament.game} Game ID
                         <input
                           name="gameId"
-                          placeholder="Enter game ID"
+                          placeholder="Enter your Game ID"
                           required
                         />
                       </label>
@@ -495,12 +555,15 @@ export default function AdminPage() {
 
                   {joined.length > 0 && (
                     <details className="registrations">
-                      <summary>View Registrations ({joined.length})</summary>
+                      <summary>
+                        View Registrations ({joined.length})
+                      </summary>
+
                       {joined.map((registration) => (
                         <div className="registration" key={registration.id}>
                           <strong>{registration.teamName}</strong>
-                          <span>Captain: {registration.captain}</span>
-                          <span>MLBB ID: {registration.gameId}</span>
+                          <span>Captain / Player: {registration.captain}</span>
+                          <span>Game ID: {registration.gameId}</span>
                         </div>
                       ))}
                     </details>
@@ -512,9 +575,7 @@ export default function AdminPage() {
         )}
       </section>
 
-      <footer>
-        Hancy Arena • Tournament Management
-      </footer>
+      <footer>Hancy Arena • Multi-Game Tournament Management</footer>
 
       <style jsx>{`
         .page {
@@ -526,7 +587,8 @@ export default function AdminPage() {
           box-sizing: border-box;
         }
 
-        .header, .panel {
+        .header,
+        .panel {
           max-width: 950px;
           width: 100%;
           margin: 0 auto 24px;
@@ -564,7 +626,8 @@ export default function AdminPage() {
           margin-bottom: 12px;
         }
 
-        .muted, footer {
+        .muted,
+        footer {
           color: #94a3b8;
         }
 
@@ -605,7 +668,8 @@ export default function AdminPage() {
           gap: 14px;
         }
 
-        .two, .three {
+        .two,
+        .three {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 14px;
@@ -622,7 +686,9 @@ export default function AdminPage() {
           font-size: 14px;
         }
 
-        input, select, textarea {
+        input,
+        select,
+        textarea {
           box-sizing: border-box;
           width: 100%;
           min-width: 0;
@@ -683,6 +749,7 @@ export default function AdminPage() {
         }
 
         .tag {
+          display: inline-block;
           padding: 6px 9px;
           border-radius: 20px;
           background: #172554;
@@ -710,7 +777,8 @@ export default function AdminPage() {
           overflow-wrap: anywhere;
         }
 
-        .infoGrid span, .registration span {
+        .infoGrid span,
+        .registration span {
           color: #94a3b8;
           font-size: 12px;
         }
@@ -767,7 +835,9 @@ export default function AdminPage() {
             padding: 16px;
           }
 
-          .two, .three, .infoGrid {
+          .two,
+          .three,
+          .infoGrid {
             grid-template-columns: 1fr;
           }
 
