@@ -26,7 +26,7 @@ const games = [
     logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Freefirelogo.png',
   },
   {
-    name: 'Ludo',
+    name: 'Ludo King',
     icon: '🎲',
     color: '#20c997',
     description: 'Classic Board Game',
@@ -42,7 +42,7 @@ const events = [
   { name: 'PUBG Night Survival', game: 'PUBG Mobile', mode: 'Squad • Survival', entry: 'NPR 50', prize: 'NPR 1,000' },
   { name: 'Free Fire Booyah Cup', game: 'Free Fire', mode: 'Squad • Battle Royale', entry: 'NPR 100', prize: 'NPR 2,000' },
   { name: 'Free Fire Clash', game: 'Free Fire', mode: 'Clash Squad', entry: 'NPR 50', prize: 'NPR 1,000' },
-  { name: 'Hancy Ludo Challenge', game: 'Ludo', mode: '1v1 • Classic', entry: 'NPR 20', prize: 'NPR 300' },
+  { name: 'Hancy Ludo King Challenge', game: 'Ludo King', mode: '1v1 • Classic', entry: 'NPR 20', prize: 'NPR 300' },
 ];
 
 export default function Home() {
@@ -62,23 +62,26 @@ export default function Home() {
     setMsg('');
     setBusy(true);
 
-    const sb = supabaseBrowser();
+    try {
+      const sb = supabaseBrowser();
 
-    if (!sb) {
-      setMsg('Supabase keys missing. Add them to .env.local');
+      if (!sb) {
+        setMsg('Supabase keys missing. Add them to .env.local');
+        return;
+      }
+
+      const { error } = await sb.auth.signUp({ email, password });
+
+      setMsg(
+        error
+          ? error.message
+          : 'Account created! Check your email if confirmation is enabled.'
+      );
+    } catch {
+      setMsg('Signup failed. Please try again.');
+    } finally {
       setBusy(false);
-      return;
     }
-
-    const { error } = await sb.auth.signUp({ email, password });
-
-    setMsg(
-      error
-        ? error.message
-        : 'Account created! Check your email if confirmation is enabled.'
-    );
-
-    setBusy(false);
   }
 
   return (
@@ -160,12 +163,12 @@ export default function Home() {
             <div className="game-grid">
               <button
                 type="button"
-                className={`game-card ${selectedGame === 'All Games' ? 'selected' : ''}`}
+                className={`game-card all-card ${selectedGame === 'All Games' ? 'selected' : ''}`}
                 onClick={() => setSelectedGame('All Games')}
               >
                 <span className="game-icon all-icon">🎮</span>
                 <strong>All Games</strong>
-                <small>All tournaments</small>
+                <small>Select Game</small>
               </button>
 
               {games.map((game) => (
@@ -181,16 +184,18 @@ export default function Home() {
                       src={game.logo}
                       alt={`${game.name} logo`}
                       className="game-logo"
+                      loading="lazy"
                       onError={(e) => {
                         e.currentTarget.style.display = 'none';
-                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                        const fallback = e.currentTarget
+                          .nextElementSibling as HTMLElement | null;
                         if (fallback) fallback.style.display = 'grid';
                       }}
                     />
                     <span className="logo-fallback">{game.icon}</span>
                   </span>
                   <strong>{game.name}</strong>
-                  <small>{game.description}</small>
+                  <small>Select Game</small>
                 </button>
               ))}
             </div>
@@ -213,14 +218,20 @@ export default function Home() {
                     <span className="status">OPEN</span>
                     <div className="event-game">
                       {game && (
-                        <img
-                          src={game.logo}
-                          alt=""
-                          className="event-logo"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                          }}
-                        />
+                        <span className="event-logo-box">
+                          <img
+                            src={game.logo}
+                            alt={`${game.name} logo`}
+                            className="event-logo"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              const fallback = e.currentTarget
+                                .nextElementSibling as HTMLElement | null;
+                              if (fallback) fallback.style.display = 'grid';
+                            }}
+                          />
+                          <span className="event-logo-fallback">{game.icon}</span>
+                        </span>
                       )}
                       <small>{event.game}</small>
                     </div>
@@ -294,7 +305,8 @@ export default function Home() {
                   <div
                     className={
                       msg.toLowerCase().includes('error') ||
-                      msg.toLowerCase().includes('missing')
+                      msg.toLowerCase().includes('missing') ||
+                      msg.toLowerCase().includes('failed')
                         ? 'msg err'
                         : 'msg'
                     }
@@ -313,56 +325,63 @@ export default function Home() {
       <style jsx>{`
         .game-grid {
           display: grid;
-          grid-template-columns: repeat(5, minmax(0, 1fr));
-          gap: 14px;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 16px;
           margin-top: 22px;
         }
 
         .game-card {
           --game-color: #7257ff;
           min-width: 0;
-          padding: 18px 10px;
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          border-radius: 16px;
-          background: rgba(20, 24, 42, 0.9);
+          min-height: 180px;
+          padding: 20px 12px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          border-radius: 18px;
+          background: linear-gradient(145deg, #191d35, #0c0f1c);
           color: inherit;
           text-align: center;
           cursor: pointer;
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 9px;
-          transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+          justify-content: center;
+          gap: 12px;
+          transition: transform 0.25s ease, border-color 0.25s ease,
+            box-shadow 0.25s ease;
         }
 
         .game-card:hover {
-          transform: translateY(-3px);
+          transform: translateY(-4px);
           border-color: var(--game-color);
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
         }
 
         .game-card.selected {
           border: 2px solid var(--game-color);
-          box-shadow: 0 0 18px rgba(114, 87, 255, 0.45);
-          background: rgba(40, 35, 75, 0.75);
+          box-shadow: 0 0 22px color-mix(in srgb, var(--game-color) 40%, transparent);
+          background: linear-gradient(145deg, #242748, #111426);
         }
 
         .game-icon {
           position: relative;
-          width: 70px;
-          height: 70px;
-          border-radius: 15px;
+          width: 112px;
+          height: 112px;
+          flex-shrink: 0;
+          border-radius: 20px;
           display: grid;
           place-items: center;
           overflow: hidden;
           background: #ffffff;
-          border: 1px solid rgba(255, 255, 255, 0.2);
+          border: 2px solid var(--game-color);
+          box-shadow: 0 0 14px color-mix(in srgb, var(--game-color) 25%, transparent);
         }
 
         .game-logo {
+          display: block;
           width: 100%;
           height: 100%;
           object-fit: contain;
-          padding: 5px;
+          padding: 2px;
         }
 
         .logo-fallback {
@@ -370,39 +389,63 @@ export default function Home() {
           position: absolute;
           inset: 0;
           place-items: center;
-          font-size: 32px;
+          font-size: 42px;
           background: #171b2d;
+        }
+
+        .all-card {
+          --game-color: #ffffff;
         }
 
         .all-icon {
           background: #171b2d;
-          font-size: 32px;
+          font-size: 42px;
         }
 
         .game-card strong {
-          font-size: 13px;
+          font-size: 15px;
+          font-weight: 700;
         }
 
         .game-card small {
-          font-size: 11px;
-          opacity: 0.7;
+          font-size: 12px;
+          opacity: 0.75;
         }
 
         .event-game {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 9px;
           margin-bottom: 12px;
           font-size: 13px;
         }
 
+        .event-logo-box {
+          position: relative;
+          display: grid;
+          place-items: center;
+          width: 42px;
+          height: 42px;
+          overflow: hidden;
+          background: #ffffff;
+          border-radius: 10px;
+          flex-shrink: 0;
+        }
+
         .event-logo {
-          width: 34px;
-          height: 34px;
+          width: 100%;
+          height: 100%;
           object-fit: contain;
-          background: #fff;
-          border-radius: 7px;
-          padding: 3px;
+          padding: 2px;
+        }
+
+        .event-logo-fallback {
+          display: none;
+          position: absolute;
+          inset: 0;
+          place-items: center;
+          background: #171b2d;
+          font-size: 22px;
         }
 
         .hero-panel {
@@ -418,19 +461,24 @@ export default function Home() {
           font-size: 27px;
         }
 
-        @media (max-width: 700px) {
+        @media (max-width: 480px) {
           .game-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
+            gap: 12px;
           }
 
           .game-card {
-            padding: 15px 8px;
+            min-height: 165px;
+            padding: 16px 8px;
           }
 
           .game-icon {
-            width: 62px;
-            height: 62px;
+            width: 96px;
+            height: 96px;
+            border-radius: 16px;
+          }
+
+          .game-card strong {
+            font-size: 13px;
           }
         }
       `}</style>
