@@ -1,3 +1,4 @@
+
 'use client';
 
 import { FormEvent, useState } from 'react';
@@ -47,6 +48,7 @@ const events = [
 
 export default function Home() {
   const [selectedGame, setSelectedGame] = useState('All Games');
+  const [playerName, setPlayerName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [msg, setMsg] = useState('');
@@ -57,7 +59,7 @@ export default function Home() {
       ? events
       : events.filter((event) => event.game === selectedGame);
 
-  async function signup(e: FormEvent) {
+  async function signup(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setMsg('');
     setBusy(true);
@@ -66,17 +68,30 @@ export default function Home() {
       const sb = supabaseBrowser();
 
       if (!sb) {
-        setMsg('Supabase keys missing. Add them to .env.local');
+        setMsg('Supabase keys missing. Check your environment variables.');
         return;
       }
 
-      const { error } = await sb.auth.signUp({ email, password });
+      const { error } = await sb.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            player_name: playerName.trim(),
+          },
+        },
+      });
 
-      setMsg(
-        error
-          ? error.message
-          : 'Account created! Check your email if confirmation is enabled.'
-      );
+      if (error) {
+        setMsg(`Signup error: ${error.message}`);
+      } else {
+        setMsg(
+          'Account created! Check your email if confirmation is enabled. Your player profile will be saved in the database.'
+        );
+        setPlayerName('');
+        setEmail('');
+        setPassword('');
+      }
     } catch {
       setMsg('Signup failed. Please try again.');
     } finally {
@@ -97,7 +112,7 @@ export default function Home() {
             <a href="#games">Games</a>
             <a href="#tournaments">Tournaments</a>
             <a href="#leaderboard">Leaderboard</a>
-            <a href="#login">Login</a>
+            <a href="#login">Create Account</a>
           </div>
         </div>
       </header>
@@ -283,12 +298,23 @@ export default function Home() {
             <div className="panel">
               <form className="form" onSubmit={signup}>
                 <input
+                  type="text"
+                  placeholder="Player Name"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  minLength={2}
+                  maxLength={40}
+                  required
+                />
+
+                <input
                   type="email"
                   placeholder="Email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                 />
+
                 <input
                   type="password"
                   placeholder="Password (minimum 6 characters)"
@@ -297,6 +323,7 @@ export default function Home() {
                   minLength={6}
                   required
                 />
+
                 <button className="btn" disabled={busy}>
                   {busy ? 'Creating...' : 'Create Account'}
                 </button>
@@ -310,6 +337,7 @@ export default function Home() {
                         ? 'msg err'
                         : 'msg'
                     }
+                    role="status"
                   >
                     {msg}
                   </div>
