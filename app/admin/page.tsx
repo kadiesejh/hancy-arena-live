@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 type Tournament = {
   id: string;
@@ -13,6 +13,20 @@ type Tournament = {
 
 const STORAGE_KEY = "hancy-arena-tournaments";
 
+function formatDate(value: string): string {
+  if (!value || !value.includes("T")) return "Date not set";
+
+  const [datePart, timePart] = value.split("T");
+  const [year, month, day] = datePart.split("-");
+  const [hourText, minute] = timePart.split(":");
+
+  const hour = Number(hourText);
+  const displayHour = hour % 12 || 12;
+  const ampm = hour >= 12 ? "PM" : "AM";
+
+  return `${day}/${month}/${year} at ${displayHour}:${minute} ${ampm}`;
+}
+
 export default function AdminPage() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [name, setName] = useState("");
@@ -20,25 +34,28 @@ export default function AdminPage() {
   const [prize, setPrize] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
-  // Load saved tournaments when the page opens
+  // Load saved tournaments from this browser
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
+
       if (saved) {
         const parsed: unknown = JSON.parse(saved);
+
         if (Array.isArray(parsed)) {
           setTournaments(parsed as Tournament[]);
         }
       }
     } catch {
-      console.error("Could not load saved tournaments.");
+      setError("Saved tournaments load nahi ho sake.");
     } finally {
       setLoaded(true);
     }
   }, []);
 
-  // Save tournaments whenever the list changes
+  // Save tournament list in this browser
   useEffect(() => {
     if (!loaded) return;
 
@@ -48,26 +65,52 @@ export default function AdminPage() {
         JSON.stringify(tournaments)
       );
     } catch {
-      setMessage("Save nahi hua. Browser storage check karo.");
+      setError("Browser storage mein save nahi ho saka.");
     }
   }, [tournaments, loaded]);
 
-  function createTournament(event: React.FormEvent<HTMLFormElement>) {
+  function createTournament(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage("");
+    setError("");
 
     const cleanName = name.trim();
     const cleanPrize = prize.trim();
 
     if (!cleanName || !date || !cleanPrize) {
-      setMessage("Bhai, saari details bharo.");
+      setError("Tournament name, date/time aur prize bharo.");
+      return;
+    }
+
+    // Validate the datetime-local value without timezone conversion
+    const datePattern =
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+
+    if (!datePattern.test(date)) {
+      setError("Date aur time dobara calendar se select karo.");
+      return;
+    }
+
+    const [datePart, timePart] = date.split("T");
+    const [year, month, day] = datePart.split("-").map(Number);
+    const [hour, minute] = timePart.split(":").map(Number);
+    const checkDate = new Date(year, month - 1, day, hour, minute);
+
+    if (
+      checkDate.getFullYear() !== year ||
+      checkDate.getMonth() !== month - 1 ||
+      checkDate.getDate() !== day ||
+      checkDate.getHours() !== hour ||
+      checkDate.getMinutes() !== minute
+    ) {
+      setError("Valid date aur time select karo.");
       return;
     }
 
     const newTournament: Tournament = {
-      id: crypto.randomUUID(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       name: cleanName,
-      date: date,
+      date,
       prize: cleanPrize,
       status: "Upcoming",
     };
@@ -80,7 +123,7 @@ export default function AdminPage() {
     setName("");
     setDate("");
     setPrize("");
-    setMessage("Tournament date aur time ke saath save ho gaya!");
+    setMessage("Tournament date aur time ke saath add ho gaya!");
   }
 
   function deleteTournament(id: string) {
@@ -88,26 +131,13 @@ export default function AdminPage() {
       previous.filter((tournament) => tournament.id !== id)
     );
     setMessage("Tournament delete ho gaya.");
-  }
-
-  function formatDate(value: string) {
-    // datetime-local value ko local time ke roop mein display karo
-    const [datePart, timePart] = value.split("T");
-    if (!datePart || !timePart) return value;
-
-    const [year, month, day] = datePart.split("-");
-    const [hours, minutes] = timePart.split(":");
-    const hour = Number(hours);
-    const displayHour = hour % 12 || 12;
-    const ampm = hour >= 12 ? "PM" : "AM";
-
-    return `${day}/${month}/${year}, ${displayHour}:${minutes} ${ampm}`;
+    setError("");
   }
 
   if (!loaded) {
     return (
       <main className="page">
-        <p>Loading tournaments...</p>
+        <p>Hancy Arena load ho raha hai...</p>
       </main>
     );
   }
@@ -116,36 +146,65 @@ export default function AdminPage() {
     <main className="page">
       <header className="header">
         <div>
-          <p className="eyebrow">MLBB TOURNAMENT MANAGEMENT</p>
+          <p className="eyebrow">MOBILE LEGENDS TOURNAMENTS</p>
           <h1>Hancy Arena</h1>
-          <p className="subtitle">Admin Dashboard</p>
+          <p className="muted">Admin Dashboard</p>
         </div>
-        <span className="count">
+
+        <div className="count">
           {tournaments.length} Tournaments
-        </span>
+        </div>
       </header>
 
       <section className="panel">
         <h2>Create Tournament</h2>
 
-        <form onSubmit={createTournament} className="form">
+        <form className="form" onSubmit={createTournament}>
           <label>
             Tournament Name
             <input
               type="text"
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. Hancy Arena Cup"
+              placeholder="Hancy Arena Cup"
               required
             />
           </label>
 
           <label>
-            Tournament Date &amp; Time
+            Tournament Date
             <input
-              type="datetime-local"
-              value={date}
-              onChange={(event) => setDate(event.target.value)}
+              type="date"
+              value={date.split("T")[0] || ""}
+              onChange={(event) => {
+                const selectedDate = event.target.value;
+                const currentTime = date.split("T")[1] || "18:00";
+                setDate(
+                  selectedDate ? `${selectedDate}T${currentTime}` : ""
+                );
+              }}
+              required
+            />
+          </label>
+
+          <label>
+            Tournament Time
+            <input
+              type="time"
+              value={date.split("T")[1] || ""}
+              onChange={(event) => {
+                const selectedTime = event.target.value;
+                const currentDate = date.split("T")[0] || "";
+
+                setDate(
+                  currentDate && selectedTime
+                    ? `${currentDate}T${selectedTime}`
+                    : currentDate
+                      ? `${currentDate}T${selectedTime}`
+                      : ""
+                );
+              }}
+              step={60}
               required
             />
           </label>
@@ -156,7 +215,7 @@ export default function AdminPage() {
               type="text"
               value={prize}
               onChange={(event) => setPrize(event.target.value)}
-              placeholder="e.g. NPR 5,000"
+              placeholder="NPR 5,000"
               required
             />
           </label>
@@ -164,34 +223,29 @@ export default function AdminPage() {
           <button type="submit">Create Tournament</button>
         </form>
 
-        {message && (
-          <p className="message" role="status">
-            {message}
-          </p>
-        )}
+        {message && <p className="success">{message}</p>}
+        {error && <p className="error">{error}</p>}
       </section>
 
       <section className="panel">
         <h2>All Tournaments</h2>
 
         {tournaments.length === 0 ? (
-          <p className="empty">Abhi koi tournament nahi hai.</p>
+          <p className="muted">Abhi koi tournament nahi hai.</p>
         ) : (
-          <div className="tournament-list">
+          <div className="list">
             {tournaments.map((tournament) => (
               <article className="tournament" key={tournament.id}>
-                <div>
+                <div className="details">
                   <h3>{tournament.name}</h3>
                   <p>
-                    <strong>Date:</strong>{" "}
+                    <strong>Date &amp; Time:</strong>{" "}
                     {formatDate(tournament.date)}
                   </p>
                   <p>
                     <strong>Prize:</strong> {tournament.prize}
                   </p>
-                  <span className="status">
-                    {tournament.status}
-                  </span>
+                  <span className="status">{tournament.status}</span>
                 </div>
 
                 <button
@@ -210,6 +264,7 @@ export default function AdminPage() {
       <style jsx>{`
         .page {
           min-height: 100vh;
+          box-sizing: border-box;
           padding: 32px 16px;
           background: #0b1020;
           color: #f8fafc;
@@ -218,8 +273,8 @@ export default function AdminPage() {
 
         .header,
         .panel {
-          width: 100%;
           max-width: 850px;
+          width: 100%;
           margin: 0 auto 24px;
         }
 
@@ -227,8 +282,8 @@ export default function AdminPage() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          gap: 16px;
           flex-wrap: wrap;
+          gap: 16px;
         }
 
         .eyebrow {
@@ -242,18 +297,21 @@ export default function AdminPage() {
           font-size: clamp(28px, 5vw, 40px);
         }
 
-        .subtitle,
-        .empty {
+        h2 {
+          margin-top: 0;
+        }
+
+        .muted {
           color: #94a3b8;
         }
 
         .count,
         .status {
           display: inline-block;
-          padding: 7px 11px;
+          padding: 8px 12px;
           border-radius: 999px;
           background: #172554;
-          color: #93c5fd;
+          color: #bfdbfe;
           font-size: 13px;
         }
 
@@ -263,11 +321,6 @@ export default function AdminPage() {
           border: 1px solid #293449;
           border-radius: 16px;
           background: #111827;
-        }
-
-        h2 {
-          margin-top: 0;
-          margin-bottom: 20px;
         }
 
         .form {
@@ -305,12 +358,15 @@ export default function AdminPage() {
           cursor: pointer;
         }
 
-        .message {
-          margin-bottom: 0;
-          color: #7dd3fc;
+        .success {
+          color: #86efac;
         }
 
-        .tournament-list {
+        .error {
+          color: #fca5a5;
+        }
+
+        .list {
           display: grid;
           gap: 12px;
         }
@@ -325,12 +381,16 @@ export default function AdminPage() {
           border-radius: 12px;
         }
 
-        .tournament h3 {
+        .details {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .details h3 {
           margin-top: 0;
         }
 
-        .tournament p {
-          overflow-wrap: anywhere;
+        .details p {
           color: #cbd5e1;
         }
 
