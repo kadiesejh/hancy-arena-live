@@ -4,10 +4,34 @@ import { FormEvent, useState } from 'react';
 import { supabaseBrowser } from '../lib/supabase';
 
 const games = [
-  { name: 'Mobile Legends', short: 'MLBB', icon: '⚔️', color: '#7257ff', description: '5v5 MOBA' },
-  { name: 'PUBG Mobile', short: 'PUBG', icon: '🎯', color: '#f5a623', description: 'Battle Royale' },
-  { name: 'Free Fire', short: 'FREE FIRE', icon: '🔥', color: '#ff5738', description: 'Survival Battle' },
-  { name: 'Ludo', short: 'LUDO', icon: '🎲', color: '#20c997', description: 'Classic Board Game' },
+  {
+    name: 'Mobile Legends',
+    icon: '⚔️',
+    color: '#7257ff',
+    description: '5v5 MOBA',
+    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Mobile_Legends_Logo.webp',
+  },
+  {
+    name: 'PUBG Mobile',
+    icon: '🎯',
+    color: '#f5a623',
+    description: 'Battle Royale',
+    logo: 'https://www.pubgmobile.com/images/event/brandassets/down-logo1.png',
+  },
+  {
+    name: 'Free Fire',
+    icon: '🔥',
+    color: '#ff5738',
+    description: 'Survival Battle',
+    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Freefirelogo.png',
+  },
+  {
+    name: 'Ludo',
+    icon: '🎲',
+    color: '#20c997',
+    description: 'Classic Board Game',
+    logo: 'https://brandlogos.sgp1.digitaloceanspaces.com/png/arcticons/ludo-king-400.png',
+  },
 ];
 
 const events = [
@@ -79,18 +103,17 @@ export default function Home() {
         <div className="wrap">
           <section className="hero">
             <div>
-              <span className="badge">⚡ REAL MLBB TOURNAMENT PLATFORM</span>
+              <span className="badge">⚡ MULTI-GAME TOURNAMENT PLATFORM</span>
               <h1>
-                Play.
-                Compete.
+                Play. Compete.
                 <br />
                 <span>Win.</span>
               </h1>
               <p>
-                Hancy Arena mein apni squad banao, tournaments join karo aur
-                competition mein apna naam banao.
+                Hancy Arena mein apni squad banao, tournaments join karo
+                aur competition mein apna naam banao.
               </p>
-              <a className="btn" href="#games">Explore Games</a>
+              <a className="btn" href="#games">Explore Games</a>{' '}
               <a className="btn alt" href="#login">Create Account</a>
             </div>
 
@@ -131,7 +154,7 @@ export default function Home() {
           <section className="section" id="games">
             <h2>🎮 Choose Your Game</h2>
             <p className="muted">
-              Apna game select karo aur available tournaments dekho.
+              Game logo par tap karo aur uske tournaments dekho.
             </p>
 
             <div className="game-grid">
@@ -153,7 +176,19 @@ export default function Home() {
                   style={{ '--game-color': game.color } as React.CSSProperties}
                   onClick={() => setSelectedGame(game.name)}
                 >
-                  <span className="game-icon">{game.icon}</span>
+                  <span className="game-icon">
+                    <img
+                      src={game.logo}
+                      alt={`${game.name} logo`}
+                      className="game-logo"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                        if (fallback) fallback.style.display = 'grid';
+                      }}
+                    />
+                    <span className="logo-fallback">{game.icon}</span>
+                  </span>
                   <strong>{game.name}</strong>
                   <small>{game.description}</small>
                 </button>
@@ -177,7 +212,16 @@ export default function Home() {
                   <div className="panel card" key={event.name}>
                     <span className="status">OPEN</span>
                     <div className="event-game">
-                      <span>{game?.icon ?? '🎮'}</span>
+                      {game && (
+                        <img
+                          src={game.logo}
+                          alt=""
+                          className="event-logo"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      )}
                       <small>{event.game}</small>
                     </div>
                     <h3>{event.name}</h3>
@@ -264,7 +308,7 @@ export default function Home() {
         </div>
       </main>
 
-      <footer>© 2026 Hancy Arena • MLBB Tournament Platform</footer>
+      <footer>© 2026 Hancy Arena • Multi-Game Tournament Platform</footer>
 
       <style jsx>{`
         .game-grid {
@@ -298,23 +342,41 @@ export default function Home() {
 
         .game-card.selected {
           border: 2px solid var(--game-color);
-          box-shadow: 0 0 18px color-mix(in srgb, var(--game-color) 45%, transparent);
+          box-shadow: 0 0 18px rgba(114, 87, 255, 0.45);
           background: rgba(40, 35, 75, 0.75);
         }
 
         .game-icon {
-          width: 58px;
-          height: 58px;
+          position: relative;
+          width: 70px;
+          height: 70px;
           border-radius: 15px;
           display: grid;
           place-items: center;
+          overflow: hidden;
+          background: #ffffff;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .game-logo {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          padding: 5px;
+        }
+
+        .logo-fallback {
+          display: none;
+          position: absolute;
+          inset: 0;
+          place-items: center;
           font-size: 32px;
-          background: color-mix(in srgb, var(--game-color) 20%, #111522);
-          border: 1px solid color-mix(in srgb, var(--game-color) 65%, transparent);
+          background: #171b2d;
         }
 
         .all-icon {
-          --game-color: #ffffff;
+          background: #171b2d;
+          font-size: 32px;
         }
 
         .game-card strong {
@@ -331,12 +393,16 @@ export default function Home() {
           align-items: center;
           gap: 8px;
           margin-bottom: 12px;
-          font-size: 22px;
+          font-size: 13px;
         }
 
-        .event-game small {
-          font-size: 12px;
-          opacity: 0.75;
+        .event-logo {
+          width: 34px;
+          height: 34px;
+          object-fit: contain;
+          background: #fff;
+          border-radius: 7px;
+          padding: 3px;
         }
 
         .hero-panel {
@@ -363,9 +429,8 @@ export default function Home() {
           }
 
           .game-icon {
-            width: 52px;
-            height: 52px;
-            font-size: 28px;
+            width: 62px;
+            height: 62px;
           }
         }
       `}</style>
