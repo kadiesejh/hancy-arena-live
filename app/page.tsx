@@ -1,28 +1,55 @@
-
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useState,
+} from 'react';
 import { supabaseBrowser } from '../lib/supabase';
 
 const games = [
-  { name: 'Mobile Legends', icon: '⚔️', color: '#7257ff', description: '5v5 MOBA', logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Mobile_Legends_Logo.webp' },
-  { name: 'PUBG Mobile', icon: '🎯', color: '#f5a623', description: 'Battle Royale', logo: 'https://www.pubgmobile.com/images/event/brandassets/down-logo1.png' },
-  { name: 'Free Fire', icon: '🔥', color: '#ff5738', description: 'Survival Battle', logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Freefirelogo.png' },
-  { name: 'Ludo King', icon: '🎲', color: '#20c997', description: 'Classic Board Game', logo: 'https://brandlogos.sgp1.digitaloceanspaces.com/png/arcticons/ludo-king-400.png' },
+  {
+    name: 'Mobile Legends',
+    icon: '⚔️',
+    color: '#7257ff',
+    description: '5v5 MOBA',
+    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Mobile_Legends_Logo.webp',
+  },
+  {
+    name: 'PUBG Mobile',
+    icon: '🎯',
+    color: '#f5a623',
+    description: 'Battle Royale',
+    logo: 'https://www.pubgmobile.com/images/event/brandassets/down-logo1.png',
+  },
+  {
+    name: 'Free Fire',
+    icon: '🔥',
+    color: '#ff5738',
+    description: 'Survival Battle',
+    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Freefirelogo.png',
+  },
+  {
+    name: 'Ludo King',
+    icon: '🎲',
+    color: '#20c997',
+    description: 'Classic Board Game',
+    logo: 'https://brandlogos.sgp1.digitaloceanspaces.com/png/arcticons/ludo-king-400.png',
+  },
 ];
 
 type Tournament = {
   id: string;
   name: string;
-  game_name?: string;
-  format?: string;
-  entry_fee_npr?: number;
-  prize_pool_npr?: number;
-  entry_fee?: number;
-  prize_pool?: number;
-  start_at?: string;
-  status?: string;
-  [key: string]: unknown;
+  game_name?: string | null;
+  format?: string | null;
+  entry_fee_npr?: number | null;
+  prize_pool_npr?: number | null;
+  entry_fee?: number | null;
+  prize_pool?: number | null;
+  start_at?: string | null;
+  status?: string | null;
 };
 
 type Registration = {
@@ -31,8 +58,16 @@ type Registration = {
   tournament_id: string;
   team_name: string;
   captain_name?: string | null;
-  phone?: string;
+  phone?: string | null;
   tournament?: Tournament;
+};
+
+type Player = {
+  id: string;
+  player_name?: string | null;
+  email?: string | null;
+  game_name?: string | null;
+  game_id?: string | null;
 };
 
 export default function Home() {
@@ -41,6 +76,7 @@ export default function Home() {
   const [loadingTournaments, setLoadingTournaments] = useState(true);
 
   const [user, setUser] = useState<any>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [authMode, setAuthMode] = useState<'signup' | 'signin'>('signup');
   const [playerName, setPlayerName] = useState('');
   const [email, setEmail] = useState('');
@@ -48,12 +84,14 @@ export default function Home() {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const [selectedTournament, setSelectedTournament] = useState<Tournament | null>(null);
+  const [selectedTournament, setSelectedTournament] =
+    useState<Tournament | null>(null);
   const [captainName, setCaptainName] = useState('');
   const [gameId, setGameId] = useState('');
   const [teamName, setTeamName] = useState('');
   const [phone, setPhone] = useState('');
   const [registrationMsg, setRegistrationMsg] = useState('');
+  const [registrationSuccess, setRegistrationSuccess] = useState(false);
   const [registrationBusy, setRegistrationBusy] = useState(false);
 
   const [myRegistrations, setMyRegistrations] = useState<Registration[]>([]);
@@ -61,65 +99,157 @@ export default function Home() {
   const [myRegistrationsError, setMyRegistrationsError] = useState('');
   const [registrationRefresh, setRegistrationRefresh] = useState(0);
 
+  const [profile, setProfile] = useState<Player | null>(null);
+  const [leaderboardMessage] = useState(
+    'Leaderboard results ko actual game_results database columns verify karne ke baad connect kiya jayega.'
+  );
+
+  const getGameName = useCallback((t: Tournament) => {
+    if (typeof t.game_name === 'string' && t.game_name.trim()) {
+      return t.game_name;
+    }
+
+    const name = (t.name || '').toLowerCase();
+
+    if (name.includes('pubg')) return 'PUBG Mobile';
+    if (name.includes('free fire') || name.includes('freefire')) {
+      return 'Free Fire';
+    }
+    if (name.includes('ludo')) return 'Ludo King';
+
+    return 'Mobile Legends';
+  }, []);
+
+  const getFee = (t: Tournament) =>
+    Number(t.entry_fee_npr ?? t.entry_fee ?? 0);
+
+  const getPrize = (t: Tournament) =>
+    Number(t.prize_pool_npr ?? t.prize_pool ?? 0);
+
+  const formatMoney = (amount: number) =>
+    `NPR ${amount.toLocaleString('en-IN')}`;
+
+  const refreshRegistrations = () =>
+    setRegistrationRefresh((value) => value + 1);
+
+  // Initialize Supabase session and listen for authentication changes.
   useEffect(() => {
     const sb = supabaseBrowser();
 
     if (!sb) {
+      setMsg('Supabase configuration missing. Check environment variables.');
       setLoadingTournaments(false);
-      setMsg('Supabase keys missing. Check environment variables.');
+      setAuthReady(true);
       return;
     }
 
     let mounted = true;
 
-    async function loadTournaments() {
+    async function initialize() {
+      try {
+        const [sessionResult, tournamentResult] = await Promise.all([
+          sb.auth.getSession(),
+          sb.from('tournaments').select('*').order('start_at', {
+            ascending: true,
+          }),
+        ]);
+
+        if (!mounted) return;
+
+        if (sessionResult.error) {
+          setMsg(`Session error: ${sessionResult.error.message}`);
+        }
+
+        setUser(sessionResult.data.session?.user ?? null);
+
+        if (tournamentResult.error) {
+          setMsg(
+            `Tournament loading error: ${tournamentResult.error.message}`
+          );
+        } else {
+          setTournaments((tournamentResult.data || []) as Tournament[]);
+        }
+      } catch {
+        if (mounted) {
+          setMsg('Website data load nahi ho paya. Refresh karke try karo.');
+        }
+      } finally {
+        if (mounted) {
+          setLoadingTournaments(false);
+          setAuthReady(true);
+        }
+      }
+    }
+
+    void initialize();
+
+    const {
+      data: { subscription },
+    } = sb.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+
+      setUser(session?.user ?? null);
+
+      if (session?.user) {
+        const savedName = String(
+          session.user.user_metadata?.player_name || ''
+        );
+
+        if (savedName) setCaptainName(savedName);
+      } else {
+        setProfile(null);
+        setMyRegistrations([]);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // Load the signed-in player's profile.
+  useEffect(() => {
+    if (!authReady || !user?.id) {
+      setProfile(null);
+      return;
+    }
+
+    const sb = supabaseBrowser();
+    if (!sb) return;
+
+    let mounted = true;
+
+    async function loadProfile() {
       const { data, error } = await sb!
-        .from('tournaments')
+        .from('players')
         .select('*')
-        .order('start_at', { ascending: true });
+        .eq('id', user.id)
+        .maybeSingle();
 
       if (!mounted) return;
 
       if (error) {
-        setMsg(`Tournament loading error: ${error.message}`);
-      } else {
-        setTournaments((data || []) as Tournament[]);
+        setProfile(null);
+        return;
       }
 
-      setLoadingTournaments(false);
+      setProfile((data || null) as Player | null);
     }
 
-    async function loadSession() {
-      const { data } = await sb!.auth.getSession();
-
-      if (mounted) {
-        setUser(data.session?.user ?? null);
-      }
-    }
-
-    void loadTournaments();
-    void loadSession();
-
-    const { data: authListener } = sb.auth.onAuthStateChange(
-      (_event, session) => {
-        if (mounted) {
-          setUser(session?.user ?? null);
-        }
-      }
-    );
+    void loadProfile();
 
     return () => {
       mounted = false;
-      authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, [authReady, user?.id]);
 
-  // Load only the current player's registrations.
+  // Load only this user's registrations.
   useEffect(() => {
     let mounted = true;
 
     async function loadMyRegistrations() {
-      if (!user?.id) {
+      if (!authReady || !user?.id) {
         setMyRegistrations([]);
         setLoadingMyRegistrations(false);
         setMyRegistrationsError('');
@@ -137,59 +267,71 @@ export default function Home() {
       setLoadingMyRegistrations(true);
       setMyRegistrationsError('');
 
-      const { data, error } = await sb
-        .from('registrations')
-        .select('id, user_id, tournament_id, team_name, captain_name, phone')
-        .eq('user_id', user.id);
-
-      if (!mounted) return;
-
-      if (error) {
-        setMyRegistrations([]);
-        setMyRegistrationsError(error.message);
-        setLoadingMyRegistrations(false);
-        return;
-      }
-
-      const registrationRows = (data || []) as Registration[];
-      const tournamentIds = [
-        ...new Set(registrationRows.map((r) => r.tournament_id)),
-      ];
-
-      let tournamentMap = new Map<string, Tournament>();
-
-      if (tournamentIds.length > 0) {
-        const { data: tournamentData, error: tournamentError } = await sb
-          .from('tournaments')
-          .select('*')
-          .in('id', tournamentIds);
+      try {
+        const { data, error } = await sb
+          .from('registrations')
+          .select(
+            'id, user_id, tournament_id, team_name, captain_name, phone'
+          )
+          .eq('user_id', user.id);
 
         if (!mounted) return;
 
-        if (tournamentError) {
-          setMyRegistrationsError(
-            `Tournament details load nahi hue: ${tournamentError.message}`
-          );
+        if (error) {
           setMyRegistrations([]);
-          setLoadingMyRegistrations(false);
+          setMyRegistrationsError(error.message);
           return;
         }
 
-        tournamentMap = new Map(
-          ((tournamentData || []) as Tournament[]).map((t) => [t.id, t])
+        const rows = (data || []) as Registration[];
+        const tournamentIds = [
+          ...new Set(rows.map((row) => row.tournament_id)),
+        ];
+
+        let tournamentMap = new Map<string, Tournament>();
+
+        if (tournamentIds.length) {
+          const {
+            data: tournamentData,
+            error: tournamentError,
+          } = await sb
+            .from('tournaments')
+            .select('*')
+            .in('id', tournamentIds);
+
+          if (!mounted) return;
+
+          if (tournamentError) {
+            setMyRegistrationsError(tournamentError.message);
+            setMyRegistrations([]);
+            return;
+          }
+
+          tournamentMap = new Map(
+            ((tournamentData || []) as Tournament[]).map((item) => [
+              item.id,
+              item,
+            ])
+          );
+        }
+
+        if (!mounted) return;
+
+        setMyRegistrations(
+          rows.map((row) => ({
+            ...row,
+            tournament: tournamentMap.get(row.tournament_id),
+          }))
         );
+      } catch {
+        if (mounted) {
+          setMyRegistrationsError(
+            'Registrations load nahi hui. Dobara try karo.'
+          );
+        }
+      } finally {
+        if (mounted) setLoadingMyRegistrations(false);
       }
-
-      if (!mounted) return;
-
-      setMyRegistrations(
-        registrationRows.map((r) => ({
-          ...r,
-          tournament: tournamentMap.get(r.tournament_id),
-        }))
-      );
-
-      setLoadingMyRegistrations(false);
     }
 
     void loadMyRegistrations();
@@ -197,38 +339,12 @@ export default function Home() {
     return () => {
       mounted = false;
     };
-  }, [user?.id, registrationRefresh]);
+  }, [authReady, user?.id, registrationRefresh]);
 
-  const filteredTournaments = tournaments.filter((t) => {
+  const filteredTournaments = tournaments.filter((tournament) => {
     if (selectedGame === 'All Games') return true;
-    return getGameName(t) === selectedGame;
+    return getGameName(tournament) === selectedGame;
   });
-
-  function getGameName(t: Tournament) {
-    if (typeof t.game_name === 'string' && t.game_name) {
-      return t.game_name;
-    }
-
-    const name = t.name.toLowerCase();
-
-    if (name.includes('pubg')) return 'PUBG Mobile';
-    if (name.includes('free fire')) return 'Free Fire';
-    if (name.includes('ludo')) return 'Ludo King';
-
-    return 'Mobile Legends';
-  }
-
-  function getFee(t: Tournament) {
-    return Number(t.entry_fee_npr ?? t.entry_fee ?? 0);
-  }
-
-  function getPrize(t: Tournament) {
-    return Number(t.prize_pool_npr ?? t.prize_pool ?? 0);
-  }
-
-  function formatMoney(amount: number) {
-    return `NPR ${amount.toLocaleString('en-IN')}`;
-  }
 
   async function handleAuth(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -239,56 +355,66 @@ export default function Home() {
       const sb = supabaseBrowser();
 
       if (!sb) {
-        setMsg('Supabase keys missing. Check environment variables.');
+        setMsg('Supabase configuration missing hai.');
         return;
       }
 
+      const cleanEmail = email.trim().toLowerCase();
+
       if (authMode === 'signup') {
+        const cleanName = playerName.trim();
+
         const { data, error } = await sb.auth.signUp({
-          email: email.trim(),
+          email: cleanEmail,
           password,
           options: {
-            data: { player_name: playerName.trim() },
+            data: { player_name: cleanName },
           },
         });
 
         if (error) {
           setMsg(`Signup error: ${error.message}`);
-        } else if (data.session) {
+          return;
+        }
+
+        if (data.session && data.user) {
           setUser(data.user);
-          setCaptainName(playerName.trim());
-          setMsg('Account created successfully! Ab tournament register kar sakte ho.');
+          setCaptainName(cleanName);
+          setMsg('Account created successfully!');
+
           setPlayerName('');
           setEmail('');
           setPassword('');
         } else {
           setMsg(
-            'Account created! Email confirmation enabled hai to Gmail check karo, phir Sign In karo.'
+            'Account request successful. Email confirmation enabled hai toh email verify karke Sign In karo.'
           );
           setAuthMode('signin');
           setPassword('');
         }
       } else {
         const { data, error } = await sb.auth.signInWithPassword({
-          email: email.trim(),
+          email: cleanEmail,
           password,
         });
 
         if (error) {
           setMsg(`Sign in error: ${error.message}`);
-        } else {
-          setUser(data.user);
-          setCaptainName(
-            String(data.user.user_metadata?.player_name || '')
-          );
-          setMsg('Login successful! Ab apni registrations bhi dekh sakte ho.');
-          setEmail('');
-          setPassword('');
-          setRegistrationRefresh((value) => value + 1);
+          return;
         }
+
+        setUser(data.user);
+        setCaptainName(
+          String(data.user.user_metadata?.player_name || '')
+        );
+        setMsg('Login successful!');
+
+        setEmail('');
+        setPassword('');
+        refreshRegistrations();
       }
     } catch {
-      setMsg('Something went wrong. Please try again.');
+      setMsg('Authentication failed. Dobara try karo.');
     } finally {
       setBusy(false);
     }
@@ -297,15 +423,40 @@ export default function Home() {
   async function handleRegistration(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setRegistrationMsg('');
+    setRegistrationSuccess(false);
 
     if (!selectedTournament) {
       setRegistrationMsg('Pehle tournament select karo.');
       return;
     }
 
-    if (!user) {
-      setRegistrationMsg('Registration se pehle account mein Sign In karo.');
-      document.getElementById('login')?.scrollIntoView({ behavior: 'smooth' });
+    if (!user?.id) {
+      setRegistrationMsg('Pehle Sign In karo.');
+      document.getElementById('login')?.scrollIntoView({
+        behavior: 'smooth',
+      });
+      return;
+    }
+
+    const cleanCaptain = captainName.trim();
+    const cleanTeam = teamName.trim();
+    const cleanPhone = phone.trim();
+    const cleanGameId = gameId.trim();
+
+    if (
+      cleanCaptain.length < 2 ||
+      cleanTeam.length < 2 ||
+      !cleanPhone ||
+      !cleanGameId
+    ) {
+      setRegistrationMsg('Saari details sahi tarah bharo.');
+      return;
+    }
+
+    const status = String(selectedTournament.status || 'open').toLowerCase();
+
+    if (status !== 'open') {
+      setRegistrationMsg('Yeh tournament abhi registration ke liye open nahi hai.');
       return;
     }
 
@@ -319,27 +470,68 @@ export default function Home() {
         return;
       }
 
-      const { error: profileError } = await sb
-        .from('players')
-        .update({
-          game_name: getGameName(selectedTournament),
-          game_id: gameId.trim(),
-        })
-        .eq('id', user.id);
+      // Check for an existing registration before inserting.
+      // The database unique index is the final duplicate protection.
+      const { data: existing, error: checkError } = await sb
+        .from('registrations')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('tournament_id', selectedTournament.id)
+        .maybeSingle();
 
-      if (profileError) {
-        setRegistrationMsg(`Profile error: ${profileError.message}`);
+      if (checkError) {
+        setRegistrationMsg(`Registration check error: ${checkError.message}`);
         return;
       }
 
+      if (existing) {
+        setRegistrationMsg('Tum is tournament mein pehle hi register ho.');
+        refreshRegistrations();
+        return;
+      }
+
+      // Profile creation/update:
+      // The existing code assumes players.id matches auth.users.id.
+      // If this table has other required columns, the database schema
+      // must be used to adjust this upsert.
+      const profilePayload: Record<string, unknown> = {
+        id: user.id,
+        game_name: getGameName(selectedTournament),
+        game_id: cleanGameId,
+      };
+
+      const metadataName = String(
+        user.user_metadata?.player_name || ''
+      ).trim();
+
+      if (metadataName || cleanCaptain) {
+        profilePayload.player_name = metadataName || cleanCaptain;
+      }
+
+      if (user.email) {
+        profilePayload.email = user.email;
+      }
+
+      const { error: profileError } = await sb
+        .from('players')
+        .upsert(profilePayload, { onConflict: 'id' });
+
+      if (profileError) {
+        setRegistrationMsg(
+          `Player profile save nahi hua: ${profileError.message}`
+        );
+        return;
+      }
+
+      // Insert registration.
       const { error: registrationError } = await sb
         .from('registrations')
         .insert({
           user_id: user.id,
           tournament_id: selectedTournament.id,
-          team_name: teamName.trim(),
-          captain_name: captainName.trim(),
-          phone: phone.trim(),
+          team_name: cleanTeam,
+          captain_name: cleanCaptain,
+          phone: cleanPhone,
         });
 
       if (registrationError) {
@@ -350,28 +542,29 @@ export default function Home() {
           setRegistrationMsg(
             'Tum is tournament mein pehle hi register ho chuke ho.'
           );
-          setRegistrationRefresh((value) => value + 1);
+          refreshRegistrations();
         } else {
           setRegistrationMsg(
             `Registration error: ${registrationError.message}`
           );
         }
-
         return;
       }
 
+      setRegistrationSuccess(true);
       setRegistrationMsg(
-        `Registration successful! Tournament: ${selectedTournament.name}`
+        `Registration successful! ${selectedTournament.name} mein tumhara registration save ho gaya.`
       );
 
       setTeamName('');
       setPhone('');
       setGameId('');
 
-      // Refresh My Registrations after successful registration.
-      setRegistrationRefresh((value) => value + 1);
+      refreshRegistrations();
     } catch {
-      setRegistrationMsg('Registration nahi ho payi. Dobara try karo.');
+      setRegistrationMsg(
+        'Registration complete nahi hui. Internet check karke dobara try karo.'
+      );
     } finally {
       setRegistrationBusy(false);
     }
@@ -379,38 +572,39 @@ export default function Home() {
 
   async function logout() {
     const sb = supabaseBrowser();
-
     if (!sb) return;
 
     const { error } = await sb.auth.signOut();
 
     if (error) {
       setMsg(`Logout error: ${error.message}`);
-    } else {
-      setUser(null);
-      setMsg('You have been signed out.');
-      setSelectedTournament(null);
-      setRegistrationMsg('');
-      setMyRegistrations([]);
+      return;
     }
+
+    setUser(null);
+    setProfile(null);
+    setMyRegistrations([]);
+    setSelectedTournament(null);
+    setRegistrationMsg('');
+    setMsg('You have been signed out.');
   }
 
   return (
     <>
       <header>
         <div className="wrap nav">
-          <div className="logo">
+          <a className="logo" href="#home">
             HANCY<span>ARENA</span>
-          </div>
+          </a>
 
-          <div className="links">
+          <nav className="links">
             <a href="#home">Home</a>
             <a href="#games">Games</a>
             <a href="#tournaments">Tournaments</a>
             <a href="#my-registrations">My Registrations</a>
             <a href="#leaderboard">Leaderboard</a>
             <a href="#login">{user ? 'My Account' : 'Sign In'}</a>
-          </div>
+          </nav>
         </div>
       </header>
 
@@ -429,18 +623,22 @@ export default function Home() {
               </h1>
 
               <p>
-                Hancy Arena mein apni squad banao, tournaments join karo aur
-                competition mein apna naam banao.
+                Hancy Arena mein apni squad banao, tournaments join karo
+                aur competition mein apna naam banao.
               </p>
 
               <a className="btn" href="#games">Explore Games</a>{' '}
-              <a className="btn alt" href="#tournaments">View Tournaments</a>
+              <a className="btn alt" href="#tournaments">
+                View Tournaments
+              </a>
             </div>
 
             <div className="panel hero-panel">
               <div className="trophy">🏆</div>
               <h2>HANCY ARENA</h2>
-              <p className="muted">Choose your game. Join the battle.</p>
+              <p className="muted">
+                Choose your game. Join the battle.
+              </p>
               <div className="hero-icons">
                 <span>⚔️</span>
                 <span>🎯</span>
@@ -459,7 +657,7 @@ export default function Home() {
 
               <div className="panel stat">
                 <strong>
-                  {new Set(tournaments.map((t) => getGameName(t))).size}
+                  {new Set(tournaments.map(getGameName)).size}
                 </strong>
                 <span className="muted">Games</span>
               </div>
@@ -513,7 +711,8 @@ export default function Home() {
                       loading="lazy"
                       onError={(e) => {
                         e.currentTarget.style.display = 'none';
-                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                        const fallback =
+                          e.currentTarget.nextElementSibling as HTMLElement | null;
                         if (fallback) fallback.style.display = 'grid';
                       }}
                     />
@@ -537,14 +736,20 @@ export default function Home() {
             </p>
 
             {loadingTournaments && (
-              <div className="panel card">Tournaments load ho rahe hain...</div>
+              <div className="panel card">
+                Tournaments load ho rahe hain...
+              </div>
             )}
 
             {!loadingTournaments && (
               <div className="grid">
                 {filteredTournaments.map((tournament) => {
                   const gameName = getGameName(tournament);
-                  const game = games.find((g) => g.name === gameName);
+                  const game = games.find((item) => item.name === gameName);
+                  const status = String(
+                    tournament.status || 'open'
+                  ).toLowerCase();
+                  const isOpen = status === 'open';
 
                   return (
                     <div className="panel card" key={tournament.id}>
@@ -554,14 +759,14 @@ export default function Home() {
 
                       <div className="event-game">
                         <span className="event-logo-box">
-                          <span>{game?.icon || '🎮'}</span>
+                          {game?.icon || '🎮'}
                         </span>
                         <small>{gameName}</small>
                       </div>
 
                       <h3>{tournament.name}</h3>
                       <p className="muted">
-                        {String(tournament.format || 'Tournament')}
+                        {tournament.format || 'Tournament'}
                       </p>
 
                       <b>Entry: {formatMoney(getFee(tournament))}</b>
@@ -571,25 +776,26 @@ export default function Home() {
 
                       {tournament.start_at && (
                         <p className="muted">
-                          Starts: {new Date(tournament.start_at).toLocaleString()}
+                          Starts:{' '}
+                          {new Date(tournament.start_at).toLocaleString()}
                         </p>
                       )}
 
                       <button
                         type="button"
                         className="btn"
-                        disabled={
-                          String(tournament.status || 'open').toLowerCase() !== 'open'
-                        }
+                        disabled={!isOpen}
                         onClick={() => {
                           setSelectedTournament(tournament);
                           setRegistrationMsg('');
-                          document.getElementById('register-form')?.scrollIntoView({
-                            behavior: 'smooth',
-                          });
+                          setRegistrationSuccess(false);
+
+                          document
+                            .getElementById('register-form')
+                            ?.scrollIntoView({ behavior: 'smooth' });
                         }}
                       >
-                        Register
+                        {isOpen ? 'Register' : 'Registration Closed'}
                       </button>
                     </div>
                   );
@@ -599,7 +805,7 @@ export default function Home() {
                   <div className="panel card">
                     <h3>Abhi tournament available nahi hai.</h3>
                     <p className="muted">
-                      Supabase ke tournaments table mein open tournaments check karo.
+                      Admin se tournament create karne ko kaho.
                     </p>
                   </div>
                 )}
@@ -607,7 +813,6 @@ export default function Home() {
             )}
           </section>
 
-          {/* MY REGISTRATIONS */}
           <section className="section" id="my-registrations">
             <h2>📋 My Registrations</h2>
             <p className="muted">
@@ -616,7 +821,7 @@ export default function Home() {
 
             {!user && (
               <div className="panel card">
-                <p>Apni registrations dekhne ke liye pehle Sign In karo.</p>
+                <p>Apni registrations dekhne ke liye Sign In karo.</p>
                 <a className="btn" href="#login">Sign In</a>
               </div>
             )}
@@ -636,7 +841,7 @@ export default function Home() {
                 <button
                   type="button"
                   className="btn"
-                  onClick={() => setRegistrationRefresh((v) => v + 1)}
+                  onClick={refreshRegistrations}
                 >
                   Retry
                 </button>
@@ -659,7 +864,10 @@ export default function Home() {
                         <div className="panel card" key={registration.id}>
                           <span className="status">REGISTERED</span>
 
-                          <h3>{tournament?.name || 'Tournament details unavailable'}</h3>
+                          <h3>
+                            {tournament?.name ||
+                              'Tournament details unavailable'}
+                          </h3>
 
                           <p className="muted">
                             {tournament
@@ -679,11 +887,13 @@ export default function Home() {
                           {tournament && (
                             <>
                               <p>
-                                <b>Entry Fee:</b> {formatMoney(getFee(tournament))}
+                                <b>Entry Fee:</b>{' '}
+                                {formatMoney(getFee(tournament))}
                               </p>
 
                               <p>
-                                <b>Prize Pool:</b> {formatMoney(getPrize(tournament))}
+                                <b>Prize Pool:</b>{' '}
+                                {formatMoney(getPrize(tournament))}
                               </p>
 
                               <p className="muted">
@@ -695,7 +905,7 @@ export default function Home() {
                               </p>
 
                               <p className="muted">
-                                Tournament status: {tournament.status || 'Not specified'}
+                                Status: {tournament.status || 'Not specified'}
                               </p>
                             </>
                           )}
@@ -733,7 +943,7 @@ export default function Home() {
 
                 {!user && (
                   <p className="muted">
-                    Registration submit karne ke liye pehle neeche account banao ya Sign In karo.
+                    Registration submit karne ke liye pehle Sign In karo.
                   </p>
                 )}
 
@@ -762,6 +972,7 @@ export default function Home() {
                     placeholder="Team Name"
                     value={teamName}
                     onChange={(e) => setTeamName(e.target.value)}
+                    minLength={2}
                     maxLength={80}
                     required
                   />
@@ -775,8 +986,13 @@ export default function Home() {
                     required
                   />
 
-                  <button className="btn" disabled={registrationBusy}>
-                    {registrationBusy ? 'Registering...' : 'Submit Registration'}
+                  <button
+                    className="btn"
+                    disabled={registrationBusy || !user}
+                  >
+                    {registrationBusy
+                      ? 'Registering...'
+                      : 'Submit Registration'}
                   </button>
 
                   <button
@@ -785,6 +1001,7 @@ export default function Home() {
                     onClick={() => {
                       setSelectedTournament(null);
                       setRegistrationMsg('');
+                      setRegistrationSuccess(false);
                     }}
                   >
                     Cancel
@@ -793,10 +1010,7 @@ export default function Home() {
                   {registrationMsg && (
                     <div
                       className={`msg ${
-                        registrationMsg.toLowerCase().includes('error') ||
-                        registrationMsg.toLowerCase().includes('nahi')
-                          ? 'err'
-                          : ''
+                        !registrationSuccess ? 'err' : ''
                       }`}
                       role="status"
                     >
@@ -811,29 +1025,15 @@ export default function Home() {
           <section className="section" id="leaderboard">
             <h2>🏆 Leaderboard</h2>
 
-            <div className="panel">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Team</th>
-                    <th>Wins</th>
-                    <th>Points</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  <tr><td>1</td><td>Hancy Warriors</td><td>8</td><td>240</td></tr>
-                  <tr><td>2</td><td>Shadow Five</td><td>7</td><td>210</td></tr>
-                  <tr><td>3</td><td>Nova Squad</td><td>6</td><td>185</td></tr>
-                </tbody>
-              </table>
+            <div className="panel card">
+              <p className="muted">{leaderboardMessage}</p>
             </div>
           </section>
 
           <section className="section" id="login">
             <h2>
-              🔐 {user
+              🔐{' '}
+              {user
                 ? 'Your Account'
                 : authMode === 'signup'
                   ? 'Create Account'
@@ -842,7 +1042,7 @@ export default function Home() {
 
             <p className="muted">
               {user
-                ? `Logged in as ${user.email}`
+                ? `Logged in as ${user.email || 'Player'}`
                 : 'Account banao ya apne existing account mein login karo.'}
             </p>
 
@@ -850,7 +1050,18 @@ export default function Home() {
               {user ? (
                 <div className="form">
                   <p>
-                    Login successful. My Registrations section mein apne tournaments dekho.
+                    <b>Player:</b>{' '}
+                    {profile?.player_name ||
+                      user.user_metadata?.player_name ||
+                      'Player'}
+                  </p>
+
+                  <p>
+                    <b>Email:</b> {user.email}
+                  </p>
+
+                  <p className="muted">
+                    Profile: {profile ? 'Loaded' : 'Not available'}
                   </p>
 
                   <button
@@ -920,11 +1131,7 @@ export default function Home() {
               {msg && (
                 <div
                   className={`msg ${
-                    msg.toLowerCase().includes('error') ||
-                    msg.toLowerCase().includes('missing') ||
-                    msg.toLowerCase().includes('failed')
-                      ? 'err'
-                      : ''
+                    /error|missing|failed/i.test(msg) ? 'err' : ''
                   }`}
                   role="status"
                 >
@@ -936,7 +1143,9 @@ export default function Home() {
         </div>
       </main>
 
-      <footer>© 2026 Hancy Arena • Multi-Game Tournament Platform</footer>
+      <footer>
+        © 2026 Hancy Arena • Multi-Game Tournament Platform
+      </footer>
 
       <style jsx>{`
         .game-grid {
@@ -951,9 +1160,9 @@ export default function Home() {
           min-width: 0;
           min-height: 180px;
           padding: 20px 12px;
-          border: 1px solid rgba(255,255,255,.14);
+          border: 1px solid rgba(255, 255, 255, 0.14);
           border-radius: 18px;
-          background: linear-gradient(145deg,#191d35,#0c0f1c);
+          background: linear-gradient(145deg, #191d35, #0c0f1c);
           color: inherit;
           text-align: center;
           cursor: pointer;
@@ -962,7 +1171,10 @@ export default function Home() {
           align-items: center;
           justify-content: center;
           gap: 12px;
-          transition: transform .25s ease,border-color .25s ease,box-shadow .25s ease;
+          transition:
+            transform 0.25s ease,
+            border-color 0.25s ease,
+            box-shadow 0.25s ease;
         }
 
         .game-card:hover {
@@ -972,7 +1184,7 @@ export default function Home() {
 
         .game-card.selected {
           border: 2px solid var(--game-color);
-          background: linear-gradient(145deg,#242748,#111426);
+          background: linear-gradient(145deg, #242748, #111426);
         }
 
         .game-icon {
@@ -1005,11 +1217,24 @@ export default function Home() {
           background: #171b2d;
         }
 
-        .all-card { --game-color: #fff; }
-        .all-icon { background: #171b2d; font-size: 42px; }
+        .all-card {
+          --game-color: #fff;
+        }
 
-        .game-card strong { font-size: 15px; font-weight: 700; }
-        .game-card small { font-size: 12px; opacity: .75; }
+        .all-icon {
+          background: #171b2d;
+          font-size: 42px;
+        }
+
+        .game-card strong {
+          font-size: 15px;
+          font-weight: 700;
+        }
+
+        .game-card small {
+          font-size: 12px;
+          opacity: 0.75;
+        }
 
         .event-game {
           display: flex;
@@ -1031,7 +1256,10 @@ export default function Home() {
           font-size: 25px;
         }
 
-        .hero-panel { text-align: center; padding: 28px; }
+        .hero-panel {
+          text-align: center;
+          padding: 28px;
+        }
 
         .hero-icons {
           display: flex;
@@ -1041,7 +1269,9 @@ export default function Home() {
           font-size: 27px;
         }
 
-        .registration-panel { padding: 24px; }
+        .registration-panel {
+          padding: 24px;
+        }
 
         .form {
           display: flex;
@@ -1054,17 +1284,19 @@ export default function Home() {
           min-width: 0;
           box-sizing: border-box;
           padding: 13px 14px;
-          border: 1px solid rgba(255,255,255,.18);
+          border: 1px solid rgba(255, 255, 255, 0.18);
           border-radius: 10px;
           background: #101426;
           color: white;
           font: inherit;
         }
 
-        .form input:focus { outline: 2px solid #7257ff; }
+        .form input:focus {
+          outline: 2px solid #7257ff;
+        }
 
         .form button:disabled {
-          opacity: .6;
+          opacity: 0.6;
           cursor: not-allowed;
         }
 
@@ -1072,17 +1304,33 @@ export default function Home() {
           margin-top: 12px;
           padding: 12px;
           border-radius: 10px;
-          background: rgba(32,201,151,.12);
+          background: rgba(32, 201, 151, 0.12);
           overflow-wrap: anywhere;
         }
 
-        .err { background: rgba(255,87,56,.14); }
+        .err {
+          background: rgba(255, 87, 56, 0.14);
+        }
 
         @media (max-width: 480px) {
-          .game-grid { gap: 12px; }
-          .game-card { min-height: 155px; padding: 16px 8px; }
-          .game-icon { width: 88px; height: 88px; border-radius: 16px; }
-          .game-card strong { font-size: 13px; }
+          .game-grid {
+            gap: 12px;
+          }
+
+          .game-card {
+            min-height: 155px;
+            padding: 16px 8px;
+          }
+
+          .game-icon {
+            width: 88px;
+            height: 88px;
+            border-radius: 16px;
+          }
+
+          .game-card strong {
+            font-size: 13px;
+          }
         }
       `}</style>
     </>
