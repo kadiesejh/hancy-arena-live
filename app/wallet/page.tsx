@@ -1,4 +1,4 @@
-```tsx
+
 'use client';
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
@@ -428,15 +428,16 @@ export default function WalletPage() {
                 </div>
               </div>
 
-              {/* RESPONSIVE QR: 180px MOBILE, 220px LAPTOP */}
+              {/* ONE QR IMAGE ONLY — NO MODAL OR SECOND QR */}
               <div className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 p-3 text-center sm:p-4">
                 <p className="mb-3 text-sm text-slate-300">
                   {paymentMethod} QR Code
                 </p>
 
                 <div className="mx-auto flex w-full min-w-0 justify-center">
-                  <div className="flex h-[180px] w-[180px] max-w-full shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-2 md:h-[220px] md:w-[220px]">
+                  <div className="flex h-[180px] w-[180px] shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-2 md:h-[220px] md:w-[220px]">
                     <img
+                      key={qrImage}
                       src={qrImage}
                       alt={`${paymentMethod} payment QR`}
                       width={220}
@@ -742,4 +743,3 @@ export default function WalletPage() {
     </main>
   );
 }
-```
