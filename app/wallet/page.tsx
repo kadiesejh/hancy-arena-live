@@ -42,9 +42,9 @@ export default function WalletPage() {
     `NPR ${Number(value || 0).toLocaleString('en-IN')}`;
 
   const loadWallet = useCallback(async (userId: string) => {
-    const sb = supabaseBrowser();
+    const client = supabaseBrowser();
 
-    if (!sb) {
+    if (!client) {
       setHistoryError('Supabase configuration missing hai.');
       setLoading(false);
       return;
@@ -55,13 +55,13 @@ export default function WalletPage() {
 
     try {
       const [walletResult, depositResult] = await Promise.all([
-        sb
+        client
           .from('wallets')
           .select('balance')
           .eq('user_id', userId)
           .maybeSingle(),
 
-        sb
+        client
           .from('wallet_deposits')
           .select(
             'id, amount, payment_method, transaction_id, status, admin_note, created_at'
@@ -97,10 +97,11 @@ export default function WalletPage() {
     }
   }, []);
 
+  // Fixed: use the non-null client inside the async function.
   useEffect(() => {
-    const sb = supabaseBrowser();
+    const client = supabaseBrowser();
 
-    if (!sb) {
+    if (!client) {
       setHistoryError('Supabase configuration missing hai.');
       setAuthReady(true);
       setLoading(false);
@@ -110,23 +111,30 @@ export default function WalletPage() {
     let mounted = true;
 
     async function initialize() {
-      const { data, error } = await sb.auth.getSession();
+      try {
+        const { data, error } = await client.auth.getSession();
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      if (error) {
-        setHistoryError(error.message);
+        if (error) {
+          setHistoryError(error.message);
+        }
+
+        setUser(data.session?.user ?? null);
+        setAuthReady(true);
+      } catch {
+        if (mounted) {
+          setHistoryError('Session load nahi hua. Dobara try karo.');
+          setAuthReady(true);
+        }
       }
-
-      setUser(data.session?.user ?? null);
-      setAuthReady(true);
     }
 
     void initialize();
 
     const {
       data: { subscription },
-    } = sb.auth.onAuthStateChange((_event, session) => {
+    } = client.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;
 
       setUser(session?.user ?? null);
@@ -176,12 +184,17 @@ export default function WalletPage() {
       numericAmount < 10 ||
       numericAmount > 10000
     ) {
-      setMessage('Amount NPR 10 se NPR 10,000 ke beech poori rakam mein bharo.');
+      setMessage(
+        'Amount NPR 10 se NPR 10,000 ke beech poori rakam mein bharo.'
+      );
       setIsError(true);
       return;
     }
 
-    if (cleanTransactionId.length < 3 || cleanTransactionId.length > 120) {
+    if (
+      cleanTransactionId.length < 3 ||
+      cleanTransactionId.length > 120
+    ) {
       setMessage('Sahi transaction ID enter karo.');
       setIsError(true);
       return;
@@ -207,9 +220,9 @@ export default function WalletPage() {
       return;
     }
 
-    const sb = supabaseBrowser();
+    const client = supabaseBrowser();
 
-    if (!sb) {
+    if (!client) {
       setMessage('Supabase configuration missing hai.');
       setIsError(true);
       return;
@@ -229,7 +242,7 @@ export default function WalletPage() {
       const extension = extensionByType[screenshot.type];
       const filePath = `${user.id}/${crypto.randomUUID()}.${extension}`;
 
-      const { error: uploadError } = await sb.storage
+      const { error: uploadError } = await client.storage
         .from('payment-proofs')
         .upload(filePath, screenshot, {
           contentType: screenshot.type,
@@ -237,12 +250,14 @@ export default function WalletPage() {
         });
 
       if (uploadError) {
-        throw new Error(`Screenshot upload failed: ${uploadError.message}`);
+        throw new Error(
+          `Screenshot upload failed: ${uploadError.message}`
+        );
       }
 
       uploadedPath = filePath;
 
-      const { error: insertError } = await sb
+      const { error: insertError } = await client
         .from('wallet_deposits')
         .insert({
           user_id: user.id,
@@ -254,7 +269,9 @@ export default function WalletPage() {
         });
 
       if (insertError) {
-        throw new Error(`Deposit request failed: ${insertError.message}`);
+        throw new Error(
+          `Deposit request failed: ${insertError.message}`
+        );
       }
 
       setMessage(
@@ -280,13 +297,14 @@ export default function WalletPage() {
       );
       setIsError(true);
 
-      // If the upload succeeded but the database insert failed,
-      // remove the unused proof image.
       if (uploadedPath) {
-        await sb.storage
-          .from('payment-proofs')
-          .remove([uploadedPath])
-          .catch(() => undefined);
+        try {
+          await client.storage
+            .from('payment-proofs')
+            .remove([uploadedPath]);
+        } catch {
+          // Ignore cleanup errors; the original error is more useful.
+        }
       }
     } finally {
       setSubmitting(false);
@@ -294,10 +312,15 @@ export default function WalletPage() {
   }
 
   async function logout() {
-    const sb = supabaseBrowser();
-    if (!sb) return;
+    const client = supabaseBrowser();
 
-    const { error } = await sb.auth.signOut();
+    if (!client) {
+      setMessage('Supabase configuration missing hai.');
+      setIsError(true);
+      return;
+    }
+
+    const { error } = await client.auth.signOut();
 
     if (error) {
       setMessage(`Logout error: ${error.message}`);
@@ -318,7 +341,11 @@ export default function WalletPage() {
         <nav>
           <a href="/">Home</a>
           <a href="/#tournaments">Tournaments</a>
-          {user && <button onClick={logout}>Sign Out</button>}
+          {user && (
+            <button type="button" onClick={logout}>
+              Sign Out
+            </button>
+          )}
         </nav>
       </header>
 
@@ -421,9 +448,7 @@ export default function WalletPage() {
 
                 <div className="instruction-text">
                   <h3>{paymentMethod} Payment</h3>
-                  <p>
-                    1. Apne {paymentMethod} app ko kholo.
-                  </p>
+                  <p>1. Apne {paymentMethod} app ko kholo.</p>
                   <p>2. QR scan karke payment karo.</p>
                   <p>3. Transaction ID aur payment screenshot sambhal kar rakho.</p>
                   <p>4. Neeche form bhar kar request submit karo.</p>
@@ -435,8 +460,7 @@ export default function WalletPage() {
 
                   <p className="small-note">
                     Payment bhejne se pehle receiver name aur details verify kar lena.
-                    Agar QR image load nahi ho, to public folder mein QR file ka naam
-                    check karo.
+                    Agar QR image load nahi ho, to public folder mein QR file ka naam check karo.
                   </p>
                 </div>
               </div>
@@ -468,7 +492,9 @@ export default function WalletPage() {
                   ))}
                 </div>
 
-                <label htmlFor="transaction-id">Transaction ID / Reference ID</label>
+                <label htmlFor="transaction-id">
+                  Transaction ID / Reference ID
+                </label>
                 <input
                   id="transaction-id"
                   type="text"
@@ -480,15 +506,21 @@ export default function WalletPage() {
                   required
                 />
 
-                <label htmlFor="payment-screenshot">Payment Screenshot</label>
+                <label htmlFor="payment-screenshot">
+                  Payment Screenshot
+                </label>
                 <input
                   id="payment-screenshot"
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) => setScreenshot(e.target.files?.[0] || null)}
+                  onChange={(e) =>
+                    setScreenshot(e.target.files?.[0] || null)
+                  }
                   required
                 />
-                <p className="small-note">JPG, PNG ya WebP • Maximum 5 MB</p>
+                <p className="small-note">
+                  JPG, PNG ya WebP • Maximum 5 MB
+                </p>
 
                 {screenshot && (
                   <p className="selected-file">
@@ -501,11 +533,16 @@ export default function WalletPage() {
                   type="submit"
                   disabled={submitting}
                 >
-                  {submitting ? 'Submitting Request...' : 'Submit Deposit Request'}
+                  {submitting
+                    ? 'Submitting Request...'
+                    : 'Submit Deposit Request'}
                 </button>
 
                 {message && (
-                  <div className={`notice ${isError ? 'error' : 'success'}`} role="status">
+                  <div
+                    className={`notice ${isError ? 'error' : 'success'}`}
+                    role="status"
+                  >
                     {message}
                   </div>
                 )}
@@ -516,7 +553,9 @@ export default function WalletPage() {
               <div className="history-heading">
                 <div>
                   <h2>📋 Deposit History</h2>
-                  <p className="muted">Tumhari recent wallet top-up requests.</p>
+                  <p className="muted">
+                    Tumhari recent wallet top-up requests.
+                  </p>
                 </div>
 
                 <button
@@ -530,12 +569,12 @@ export default function WalletPage() {
               </div>
 
               {historyError && (
-                <div className="notice error">
-                  {historyError}
-                </div>
+                <div className="notice error">{historyError}</div>
               )}
 
-              {loading && <p className="muted">Wallet history load ho rahi hai...</p>}
+              {loading && (
+                <p className="muted">Wallet history load ho rahi hai...</p>
+              )}
 
               {!loading && deposits.length === 0 && (
                 <div className="empty-state">
@@ -564,7 +603,9 @@ export default function WalletPage() {
                           </td>
                           <td>{deposit.payment_method}</td>
                           <td>{formatMoney(Number(deposit.amount))}</td>
-                          <td className="transaction-cell">{deposit.transaction_id}</td>
+                          <td className="transaction-cell">
+                            {deposit.transaction_id}
+                          </td>
                           <td>
                             <span
                               className={`status status-${String(
@@ -1108,4 +1149,3 @@ export default function WalletPage() {
     </main>
   );
 }
-
