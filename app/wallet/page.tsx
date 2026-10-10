@@ -16,1145 +16,759 @@ type Deposit = {
   created_at: string;
 };
 
+type Withdrawal = {
+  id: string;
+  amount: number;
+  payment_method: string;
+  account_name: string;
+  account_number: string;
+  status: string;
+  admin_note?: string | null;
+  created_at: string;
+};
+
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const RECEIVER_NUMBER = '9822342686';
 
 export default function WalletPage() {
-  const [user, setUser] = useState<any>(null);
-  const [authReady, setAuthReady] = useState(false);
+  const [client] = useState(() => supabaseBrowser());
 
-  const [balance, setBalance] = useState<number | null>(null);
+  const [userId, setUserId] = useState('');
+  const [email, setEmail] = useState('');
+  const [balance, setBalance] = useState(0);
+
   const [deposits, setDeposits] = useState<Deposit[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [historyError, setHistoryError] = useState('');
+  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
 
   const [paymentMethod, setPaymentMethod] =
     useState<PaymentMethod>('eSewa');
   const [amount, setAmount] = useState('');
   const [transactionId, setTransactionId] = useState('');
-  const [screenshot, setScreenshot] = useState<File | null>(null);
+  const [proof, setProof] = useState<File | null>(null);
 
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawMethod, setWithdrawMethod] =
+    useState<PaymentMethod>('eSewa');
+  const [accountName, setAccountName] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+
+  const [loading, setLoading] = useState(true);
+  const [depositLoading, setDepositLoading] = useState(false);
+  const [withdrawLoading, setWithdrawLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [isError, setIsError] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [error, setError] = useState('');
 
-  const formatMoney = (value: number) =>
-    `NPR ${Number(value || 0).toLocaleString('en-IN')}`;
+  const [expandedQR, setExpandedQR] = useState<string | null>(null);
 
-  const loadWallet = useCallback(async (userId: string) => {
-    const maybeClient = supabaseBrowser();
+  const qrImage =
+    paymentMethod === 'eSewa' ? '/esewa-qr.png' : '/khalti-qr.png';
 
-    if (!maybeClient) {
-      setHistoryError('Supabase configuration missing hai.');
+  const loadWallet = useCallback(async () => {
+    if (!client) {
+      setError('Supabase connection nahi mila. Configuration check karo.');
       setLoading(false);
       return;
     }
 
-    const client = maybeClient;
-
     setLoading(true);
-    setHistoryError('');
+    setError('');
 
     try {
-      const [walletResult, depositResult] = await Promise.all([
-        client
-          .from('wallets')
-          .select('balance')
-          .eq('user_id', userId)
-          .maybeSingle(),
+      const { data: sessionData, error: sessionError } =
+        await client.auth.getSession();
 
-        client
-          .from('wallet_deposits')
-          .select(
-            'id, amount, payment_method, transaction_id, status, admin_note, created_at'
-          )
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false })
-          .limit(20),
-      ]);
+      if (sessionError) throw sessionError;
 
-      if (walletResult.error) {
-        setBalance(null);
-        setHistoryError(
-          `Wallet balance load nahi hua: ${walletResult.error.message}`
-        );
-      } else {
-        setBalance(Number(walletResult.data?.balance ?? 0));
+      const user = sessionData.session?.user;
+
+      if (!user) {
+        setUserId('');
+        setEmail('');
+        setError('Wallet use karne ke liye pehle login karo.');
+        setLoading(false);
+        return;
       }
 
-      if (depositResult.error) {
-        setDeposits([]);
-        setHistoryError((previous) =>
-          previous
-            ? `${previous} | Deposit history: ${depositResult.error.message}`
-            : `Deposit history load nahi hui: ${depositResult.error.message}`
-        );
+      setUserId(user.id);
+      setEmail(user.email ?? '');
+
+      const [walletResult, depositResult, withdrawalResult] =
+        await Promise.all([
+          client
+            .from('wallets')
+            .select('balance')
+            .eq('user_id', user.id)
+            .maybeSingle(),
+
+          client
+            .from('wallet_deposits')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false }),
+
+          client
+            .from('wallet_withdrawals')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false }),
+        ]);
+
+      if (walletResult.error) throw walletResult.error;
+      if (depositResult.error) throw depositResult.error;
+
+      // Withdrawal history may not be available until its SQL table is created.
+      if (withdrawalResult.error) {
+        setWithdrawals([]);
+        console.error('Withdrawal history:', withdrawalResult.error.message);
       } else {
-        setDeposits((depositResult.data || []) as Deposit[]);
+        setWithdrawals((withdrawalResult.data ?? []) as Withdrawal[]);
       }
-    } catch {
-      setHistoryError('Wallet data load nahi hua. Dobara try karo.');
+
+      setBalance(Number(walletResult.data?.balance ?? 0));
+      setDeposits((depositResult.data ?? []) as Deposit[]);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Wallet load nahi ho paya.'
+      );
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [client]);
 
-  // Supabase client ko null-check ke baad stable, non-null variable mein rakho.
   useEffect(() => {
-    const maybeClient = supabaseBrowser();
+    void loadWallet();
+  }, [loadWallet]);
 
-    if (!maybeClient) {
-      setHistoryError('Supabase configuration missing hai.');
-      setAuthReady(true);
-      setLoading(false);
+  async function handleLogout() {
+    if (!client) return;
+
+    const { error: logoutError } = await client.auth.signOut();
+
+    if (logoutError) {
+      setError(logoutError.message);
       return;
     }
 
-    const client = maybeClient as NonNullable<typeof maybeClient>;
-    let mounted = true;
+    window.location.href = '/login';
+  }
 
-    async function initialize() {
-      try {
-        const { data, error } = await client.auth.getSession();
-
-        if (!mounted) return;
-
-        if (error) {
-          setHistoryError(`Session error: ${error.message}`);
-        }
-
-        setUser(data.session?.user ?? null);
-        setAuthReady(true);
-      } catch {
-        if (mounted) {
-          setHistoryError('Session load nahi hua. Dobara try karo.');
-          setAuthReady(true);
-          setLoading(false);
-        }
-      }
-    }
-
-    void initialize();
-
-    const {
-      data: { subscription },
-    } = client.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return;
-
-      setUser(session?.user ?? null);
-
-      if (!session?.user) {
-        setBalance(null);
-        setDeposits([]);
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!authReady) return;
-
-    if (!user?.id) {
-      setLoading(false);
-      setBalance(null);
-      setDeposits([]);
-      return;
-    }
-
-    void loadWallet(user.id);
-  }, [authReady, user?.id, refreshKey, loadWallet]);
-
-  async function submitDeposit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function handleDeposit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError('');
     setMessage('');
-    setIsError(false);
 
-    if (!user?.id) {
-      setMessage('Pehle apne Hancy Arena account mein Sign In karo.');
-      setIsError(true);
+    if (!client || !userId) {
+      setError('Pehle login karo.');
       return;
     }
 
-    const numericAmount = Number(amount);
-    const cleanTransactionId = transactionId.trim();
+    const amountValue = Number(amount);
 
-    if (
-      !Number.isFinite(numericAmount) ||
-      !Number.isInteger(numericAmount) ||
-      numericAmount < 10 ||
-      numericAmount > 10000
-    ) {
-      setMessage(
-        'Amount NPR 10 se NPR 10,000 ke beech poori rakam mein bharo.'
-      );
-      setIsError(true);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      setError('Sahi deposit amount enter karo.');
       return;
     }
 
-    if (
-      cleanTransactionId.length < 3 ||
-      cleanTransactionId.length > 120
-    ) {
-      setMessage('Sahi transaction ID enter karo.');
-      setIsError(true);
+    if (!transactionId.trim()) {
+      setError('Transaction ID enter karo.');
       return;
     }
 
-    if (!screenshot) {
-      setMessage('Payment ka screenshot select karo.');
-      setIsError(true);
+    if (!proof) {
+      setError('Payment screenshot select karo.');
       return;
     }
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-
-    if (!allowedTypes.includes(screenshot.type)) {
-      setMessage('Sirf JPG, PNG ya WebP image upload kar sakte ho.');
-      setIsError(true);
+    if (proof.size > MAX_FILE_SIZE) {
+      setError('Screenshot 5 MB se chhota hona chahiye.');
       return;
     }
 
-    if (screenshot.size > MAX_FILE_SIZE) {
-      setMessage('Screenshot 5 MB se chhota hona chahiye.');
-      setIsError(true);
+    if (!proof.type.startsWith('image/')) {
+      setError('Sirf image screenshot upload kar sakte ho.');
       return;
     }
 
-    const maybeClient = supabaseBrowser();
-
-    if (!maybeClient) {
-      setMessage('Supabase configuration missing hai.');
-      setIsError(true);
-      return;
-    }
-
-    const client = maybeClient as NonNullable<typeof maybeClient>;
-
-    setSubmitting(true);
-
-    let uploadedPath: string | null = null;
+    setDepositLoading(true);
 
     try {
-      const extensionByType: Record<string, string> = {
-        'image/jpeg': 'jpg',
-        'image/png': 'png',
-        'image/webp': 'webp',
-      };
-
-      const extension = extensionByType[screenshot.type];
-      const filePath = `${user.id}/${crypto.randomUUID()}.${extension}`;
+      const fileExt = proof.name.split('.').pop()?.toLowerCase() || 'jpg';
+      const filePath = `${userId}/${Date.now()}.${fileExt}`;
 
       const { error: uploadError } = await client.storage
         .from('payment-proofs')
-        .upload(filePath, screenshot, {
-          contentType: screenshot.type,
+        .upload(filePath, proof, {
           upsert: false,
+          contentType: proof.type,
         });
 
-      if (uploadError) {
-        throw new Error(
-          `Screenshot upload failed: ${uploadError.message}`
-        );
-      }
+      if (uploadError) throw uploadError;
 
-      uploadedPath = filePath;
-
+      // Private bucket ke liye public URL nahi, storage path save karo.
       const { error: insertError } = await client
         .from('wallet_deposits')
         .insert({
-          user_id: user.id,
-          amount: numericAmount,
+          user_id: userId,
+          amount: amountValue,
           payment_method: paymentMethod,
-          transaction_id: cleanTransactionId,
-          screenshot_path: filePath,
+          transaction_id: transactionId.trim(),
+          proof_url: filePath,
           status: 'pending',
         });
 
-      if (insertError) {
-        throw new Error(
-          `Deposit request failed: ${insertError.message}`
-        );
-      }
+      if (insertError) throw insertError;
 
-      setMessage(
-        'Payment request submit ho gayi! Admin payment verify karega. Approval ke baad balance update hoga.'
-      );
-      setIsError(false);
+      setMessage('Deposit request submit ho gayi! Admin verification pending hai.');
       setAmount('');
       setTransactionId('');
-      setScreenshot(null);
+      setProof(null);
 
       const fileInput = document.getElementById(
-        'payment-screenshot'
+        'payment-proof'
       ) as HTMLInputElement | null;
 
       if (fileInput) fileInput.value = '';
 
-      setRefreshKey((value) => value + 1);
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : 'Payment request submit nahi hui. Dobara try karo.'
+      await loadWallet();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Deposit request fail ho gayi.'
       );
-      setIsError(true);
-
-      if (uploadedPath) {
-        try {
-          await client.storage
-            .from('payment-proofs')
-            .remove([uploadedPath]);
-        } catch {
-          // Original error ko preserve karo.
-        }
-      }
     } finally {
-      setSubmitting(false);
+      setDepositLoading(false);
     }
   }
 
-  async function logout() {
-    const maybeClient = supabaseBrowser();
+  async function handleWithdrawal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError('');
+    setMessage('');
 
-    if (!maybeClient) {
-      setMessage('Supabase configuration missing hai.');
-      setIsError(true);
+    if (!client || !userId) {
+      setError('Withdrawal ke liye pehle login karo.');
       return;
     }
 
-    const client = maybeClient as NonNullable<typeof maybeClient>;
+    const amountValue = Number(withdrawAmount);
 
-    const { error } = await client.auth.signOut();
-
-    if (error) {
-      setMessage(`Logout error: ${error.message}`);
-      setIsError(true);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      setError('Sahi withdrawal amount enter karo.');
       return;
     }
 
-    window.location.href = '/';
+    if (amountValue > balance) {
+      setError('Withdrawal amount tumhare available balance se zyada hai.');
+      return;
+    }
+
+    if (!accountName.trim() || !accountNumber.trim()) {
+      setError('Account holder name aur account number dono bharo.');
+      return;
+    }
+
+    setWithdrawLoading(true);
+
+    try {
+      const { error: insertError } = await client
+        .from('wallet_withdrawals')
+        .insert({
+          user_id: userId,
+          amount: amountValue,
+          payment_method: withdrawMethod,
+          account_name: accountName.trim(),
+          account_number: accountNumber.trim(),
+          status: 'pending',
+        });
+
+      if (insertError) throw insertError;
+
+      setMessage(
+        'Withdrawal request submit ho gayi! Admin approval ka wait karo.'
+      );
+      setWithdrawAmount('');
+      setAccountName('');
+      setAccountNumber('');
+
+      await loadWallet();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Withdrawal request submit nahi hui.'
+      );
+    } finally {
+      setWithdrawLoading(false);
+    }
+  }
+
+  function downloadQR(src: string, name: string) {
+    const link = document.createElement('a');
+    link.href = src;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  function statusColor(status: string) {
+    switch (status.toLowerCase()) {
+      case 'approved':
+      case 'paid':
+      case 'completed':
+        return 'text-green-400';
+      case 'rejected':
+      case 'failed':
+        return 'text-red-400';
+      default:
+        return 'text-yellow-400';
+    }
+  }
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-slate-950 p-8 text-center text-white">
+        Wallet load ho raha hai...
+      </main>
+    );
+  }
+
+  if (!userId) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
+        <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 text-center">
+          <h1 className="mb-3 text-2xl font-bold">Hancy Arena Wallet</h1>
+          <p className="mb-5 text-slate-300">
+            {error || 'Wallet dekhne ke liye login karo.'}
+          </p>
+          <a
+            href="/login"
+            className="inline-block rounded-lg bg-violet-600 px-6 py-3 font-semibold hover:bg-violet-500"
+          >
+            Login
+          </a>
+        </div>
+      </main>
+    );
   }
 
   return (
-    <main className="wallet-page">
-      <header className="topbar">
-        <a href="/" className="brand">
-          HANCY<span>ARENA</span>
-        </a>
-
-        <nav>
-          <a href="/">Home</a>
-          <a href="/#tournaments">Tournaments</a>
-          {user && (
-            <button type="button" onClick={logout}>
-              Sign Out
-            </button>
-          )}
-        </nav>
-      </header>
-
-      <div className="container">
-        <div className="page-heading">
-          <p className="eyebrow">PLAYER ACCOUNT</p>
-          <h1>💳 My Wallet</h1>
-          <p className="muted">
-            Apna balance dekho aur eSewa ya Khalti se wallet top-up request bhejo.
-          </p>
-        </div>
-
-        {!authReady && (
-          <section className="panel">Account check ho raha hai...</section>
-        )}
-
-        {authReady && !user && (
-          <section className="panel">
-            <h2>Sign In Required</h2>
-            <p className="muted">
-              Wallet use karne aur payment request bhejne ke liye pehle login karo.
-            </p>
-            <a className="button" href="/#login">
-              Sign In / Create Account
+    <main className="min-h-screen bg-slate-950 px-4 py-8 text-white sm:px-6">
+      <div className="mx-auto max-w-5xl">
+        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <a href="/" className="text-sm text-violet-300 hover:text-violet-200">
+              ← Hancy Arena Home
             </a>
-          </section>
+            <h1 className="mt-2 text-3xl font-extrabold">My Wallet</h1>
+            <p className="mt-1 break-all text-sm text-slate-400">{email}</p>
+          </div>
+
+          <button
+            onClick={handleLogout}
+            className="rounded-lg border border-slate-600 px-4 py-2 hover:bg-slate-800"
+          >
+            Logout
+          </button>
+        </header>
+
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-500/40 bg-red-950/40 p-4 text-red-200">
+            {error}
+          </div>
         )}
 
-        {authReady && user && (
-          <>
-            <section className="balance-card">
+        {message && (
+          <div className="mb-4 rounded-xl border border-green-500/40 bg-green-950/40 p-4 text-green-200">
+            {message}
+          </div>
+        )}
+
+        <section className="mb-8 rounded-2xl border border-violet-500/30 bg-gradient-to-r from-violet-950 to-slate-900 p-6">
+          <p className="text-slate-300">Available wallet balance</p>
+          <h2 className="mt-2 text-4xl font-extrabold">
+            NPR {balance.toLocaleString('en-NP', { maximumFractionDigits: 2 })}
+          </h2>
+          <p className="mt-3 text-sm text-slate-400">
+            Deposit aur withdrawal requests ka status yahin dekh sakte ho.
+          </p>
+        </section>
+
+        <div className="grid gap-8 lg:grid-cols-2">
+          {/* DEPOSIT */}
+          <section className="rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
+            <h2 className="mb-5 text-2xl font-bold">Add Money</h2>
+
+            <form onSubmit={handleDeposit} className="space-y-5">
               <div>
-                <p>AVAILABLE WALLET BALANCE</p>
-                <h2>
-                  {loading && balance === null
-                    ? 'Loading...'
-                    : formatMoney(balance ?? 0)}
-                </h2>
-                <span>
-                  Balance sirf admin ke verified approval ke baad badhega.
-                </span>
-              </div>
-              <div className="balance-icon">💰</div>
-            </section>
-
-            <section className="panel payment-panel">
-              <h2>➕ Add Money</h2>
-              <p className="muted">
-                Payment apne eSewa/Khalti app se karo, phir transaction details submit karo.
-              </p>
-
-              <div className="method-grid">
-                <button
-                  type="button"
-                  className={`method ${paymentMethod === 'eSewa' ? 'active' : ''}`}
-                  onClick={() => setPaymentMethod('eSewa')}
-                >
-                  <span className="method-icon esewa-icon">e</span>
-                  <span>
-                    <strong>eSewa</strong>
-                    <small>Pay using eSewa</small>
-                  </span>
-                  <span className="radio-dot">
-                    {paymentMethod === 'eSewa' ? '✓' : ''}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  className={`method ${paymentMethod === 'Khalti' ? 'active' : ''}`}
-                  onClick={() => setPaymentMethod('Khalti')}
-                >
-                  <span className="method-icon khalti-icon">K</span>
-                  <span>
-                    <strong>Khalti</strong>
-                    <small>Pay using Khalti</small>
-                  </span>
-                  <span className="radio-dot">
-                    {paymentMethod === 'Khalti' ? '✓' : ''}
-                  </span>
-                </button>
-              </div>
-
-              <div className="payment-instructions">
-                <div className="qr-area">
-                  {paymentMethod === 'eSewa' ? (
-                    <img
-                      src="/esewa-qr.png"
-                      alt="eSewa payment QR code"
-                      className="qr-image"
-                    />
-                  ) : (
-                    <img
-                      src="/khalti-qr.png"
-                      alt="Khalti payment QR code"
-                      className="qr-image"
-                    />
-                  )}
-                </div>
-
-                <div className="instruction-text">
-                  <h3>{paymentMethod} Payment</h3>
-                  <p>1. Apne {paymentMethod} app ko kholo.</p>
-                  <p>2. QR scan karke payment karo.</p>
-                  <p>3. Transaction ID aur payment screenshot sambhal kar rakho.</p>
-                  <p>4. Neeche form bhar kar request submit karo.</p>
-
-                  <div className="receiver">
-                    <span>Payment number</span>
-                    <strong>9822342686</strong>
-                  </div>
-
-                  <p className="small-note">
-                    Payment bhejne se pehle receiver name aur details verify kar lena.
-                    Agar QR image load nahi ho, to public folder mein QR file ka naam check karo.
-                  </p>
-                </div>
-              </div>
-
-              <form className="deposit-form" onSubmit={submitDeposit}>
-                <label htmlFor="amount">Amount (NPR)</label>
-                <input
-                  id="amount"
-                  type="number"
-                  min="10"
-                  max="10000"
-                  step="1"
-                  placeholder="Example: 100"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  required
-                />
-
-                <div className="quick-amounts">
-                  {[50, 100, 200, 500, 1000].map((value) => (
+                <label className="mb-2 block text-sm text-slate-300">
+                  Payment method
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['eSewa', 'Khalti'] as PaymentMethod[]).map((method) => (
                     <button
-                      key={value}
+                      key={method}
                       type="button"
-                      className={amount === String(value) ? 'chosen' : ''}
-                      onClick={() => setAmount(String(value))}
+                      onClick={() => setPaymentMethod(method)}
+                      className={`rounded-xl border p-3 font-bold ${
+                        paymentMethod === method
+                          ? 'border-violet-400 bg-violet-600/20 text-white'
+                          : 'border-slate-600 text-slate-300'
+                      }`}
                     >
-                      NPR {value}
+                      {method}
                     </button>
                   ))}
                 </div>
+              </div>
 
-                <label htmlFor="transaction-id">
-                  Transaction ID / Reference ID
+              <div className="rounded-xl border border-slate-700 bg-slate-950 p-4 text-center">
+                <p className="mb-3 text-sm text-slate-300">
+                  {paymentMethod} QR Code
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setExpandedQR(qrImage)}
+                  className="mx-auto block rounded-xl bg-white p-2"
+                  aria-label={`Open ${paymentMethod} QR full screen`}
+                >
+                  <img
+                    src={qrImage}
+                    alt={`${paymentMethod} payment QR`}
+                    className="h-44 w-44 object-contain"
+                  />
+                </button>
+
+                <p className="mt-3 text-sm text-slate-300">
+                  Receiver number: <strong>{RECEIVER_NUMBER}</strong>
+                </p>
+
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedQR(qrImage)}
+                    className="rounded-lg bg-slate-700 px-4 py-2 text-sm hover:bg-slate-600"
+                  >
+                    Enlarge QR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      downloadQR(
+                        qrImage,
+                        paymentMethod === 'eSewa' ? 'esewa-qr.png' : 'khalti-qr.png'
+                      )
+                    }
+                    className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold hover:bg-violet-500"
+                  >
+                    Download QR
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="deposit-amount" className="mb-2 block text-sm text-slate-300">
+                  Amount (NPR)
+                </label>
+                <input
+                  id="deposit-amount"
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  required
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="Enter amount"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="transaction-id" className="mb-2 block text-sm text-slate-300">
+                  Transaction ID / Reference
                 </label>
                 <input
                   id="transaction-id"
                   type="text"
-                  minLength={3}
-                  maxLength={120}
-                  placeholder="Payment transaction ID"
+                  required
                   value={transactionId}
                   onChange={(e) => setTransactionId(e.target.value)}
-                  required
+                  placeholder="Enter payment reference"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
                 />
-
-                <label htmlFor="payment-screenshot">
-                  Payment Screenshot
-                </label>
-                <input
-                  id="payment-screenshot"
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) =>
-                    setScreenshot(e.target.files?.[0] || null)
-                  }
-                  required
-                />
-                <p className="small-note">
-                  JPG, PNG ya WebP • Maximum 5 MB
-                </p>
-
-                {screenshot && (
-                  <p className="selected-file">
-                    Selected: {screenshot.name}
-                  </p>
-                )}
-
-                <button
-                  className="button submit-button"
-                  type="submit"
-                  disabled={submitting}
-                >
-                  {submitting
-                    ? 'Submitting Request...'
-                    : 'Submit Deposit Request'}
-                </button>
-
-                {message && (
-                  <div
-                    className={`notice ${isError ? 'error' : 'success'}`}
-                    role="status"
-                  >
-                    {message}
-                  </div>
-                )}
-              </form>
-            </section>
-
-            <section className="panel history-panel">
-              <div className="history-heading">
-                <div>
-                  <h2>📋 Deposit History</h2>
-                  <p className="muted">
-                    Tumhari recent wallet top-up requests.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  className="refresh-button"
-                  onClick={() => setRefreshKey((value) => value + 1)}
-                  disabled={loading}
-                >
-                  {loading ? 'Loading...' : '↻ Refresh'}
-                </button>
               </div>
 
-              {historyError && (
-                <div className="notice error">{historyError}</div>
-              )}
+              <div>
+                <label htmlFor="payment-proof" className="mb-2 block text-sm text-slate-300">
+                  Payment screenshot (max 5 MB)
+                </label>
+                <input
+                  id="payment-proof"
+                  type="file"
+                  accept="image/*"
+                  required
+                  onChange={(e) => setProof(e.target.files?.[0] ?? null)}
+                  className="block w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-white"
+                />
+              </div>
 
-              {loading && (
-                <p className="muted">Wallet history load ho rahi hai...</p>
-              )}
+              <button
+                type="submit"
+                disabled={depositLoading}
+                className="w-full rounded-xl bg-violet-600 p-3 font-bold hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {depositLoading ? 'Submitting...' : 'Submit Deposit Request'}
+              </button>
 
-              {!loading && deposits.length === 0 && (
-                <div className="empty-state">
-                  <span>🧾</span>
-                  <p>Abhi koi deposit request nahi hai.</p>
-                </div>
-              )}
-
-              {!loading && deposits.length > 0 && (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Method</th>
-                        <th>Amount</th>
-                        <th>Transaction ID</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {deposits.map((deposit) => (
-                        <tr key={deposit.id}>
-                          <td>
-                            {new Date(deposit.created_at).toLocaleString()}
-                          </td>
-                          <td>{deposit.payment_method}</td>
-                          <td>{formatMoney(Number(deposit.amount))}</td>
-                          <td className="transaction-cell">
-                            {deposit.transaction_id}
-                          </td>
-                          <td>
-                            <span
-                              className={`status status-${String(
-                                deposit.status
-                              ).toLowerCase()}`}
-                            >
-                              {deposit.status}
-                            </span>
-                            {deposit.admin_note && (
-                              <p className="admin-note">
-                                Admin: {deposit.admin_note}
-                              </p>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              <p className="small-note">
-                Pending = verification baaki hai. Approved = request accept hui.
-                Rejected = request reject hui. Rejected request ka paisa wallet mein
-                add nahi hota.
+              <p className="text-xs leading-5 text-slate-400">
+                Payment karne ke baad reference aur screenshot submit karo.
+                Amount verification ke baad hi wallet mein add hona chahiye.
               </p>
-            </section>
-          </>
-        )}
+            </form>
+          </section>
 
-        <footer className="footer">
-          © 2026 Hancy Arena • Secure Player Wallet
-        </footer>
+          {/* WITHDRAW */}
+          <section className="rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
+            <h2 className="mb-2 text-2xl font-bold">Withdraw Money</h2>
+            <p className="mb-5 text-sm text-slate-400">
+              Available balance: NPR {balance.toLocaleString('en-NP')}
+            </p>
+
+            <form onSubmit={handleWithdrawal} className="space-y-4">
+              <div>
+                <label htmlFor="withdraw-amount" className="mb-2 block text-sm text-slate-300">
+                  Withdrawal amount (NPR)
+                </label>
+                <input
+                  id="withdraw-amount"
+                  type="number"
+                  min="1"
+                  max={balance}
+                  step="0.01"
+                  required
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  placeholder="Enter amount"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm text-slate-300">
+                  Receive payment through
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['eSewa', 'Khalti'] as PaymentMethod[]).map((method) => (
+                    <button
+                      key={method}
+                      type="button"
+                      onClick={() => setWithdrawMethod(method)}
+                      className={`rounded-xl border p-3 font-bold ${
+                        withdrawMethod === method
+                          ? 'border-violet-400 bg-violet-600/20'
+                          : 'border-slate-600 text-slate-300'
+                      }`}
+                    >
+                      {method}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="account-name" className="mb-2 block text-sm text-slate-300">
+                  Account holder name
+                </label>
+                <input
+                  id="account-name"
+                  type="text"
+                  required
+                  value={accountName}
+                  onChange={(e) => setAccountName(e.target.value)}
+                  placeholder="Name on your account"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="account-number" className="mb-2 block text-sm text-slate-300">
+                  {withdrawMethod} mobile / account number
+                </label>
+                <input
+                  id="account-number"
+                  type="text"
+                  required
+                  value={accountNumber}
+                  onChange={(e) => setAccountNumber(e.target.value)}
+                  placeholder="Enter receiving number"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={withdrawLoading}
+                className="w-full rounded-xl bg-emerald-600 p-3 font-bold hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {withdrawLoading ? 'Submitting...' : 'Request Withdrawal'}
+              </button>
+
+              <p className="text-xs leading-5 text-slate-400">
+                Request admin approval ke liye jayegi. Request submit hone se
+                balance deduct nahi hota. Actual payout aur balance update
+                secure admin-side process se karna zaroori hai.
+              </p>
+            </form>
+          </section>
+        </div>
+
+        {/* DEPOSIT HISTORY */}
+        <section className="mt-8 rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
+          <h2 className="mb-4 text-xl font-bold">Deposit History</h2>
+
+          {deposits.length === 0 ? (
+            <p className="text-slate-400">Abhi koi deposit request nahi hai.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px] text-left text-sm">
+                <thead className="border-b border-slate-700 text-slate-400">
+                  <tr>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Method</th>
+                    <th className="p-3">Amount</th>
+                    <th className="p-3">Transaction ID</th>
+                    <th className="p-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deposits.map((item) => (
+                    <tr key={item.id} className="border-b border-slate-800">
+                      <td className="p-3">
+                        {new Date(item.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="p-3">{item.payment_method}</td>
+                      <td className="p-3">NPR {Number(item.amount).toLocaleString('en-NP')}</td>
+                      <td className="p-3">{item.transaction_id}</td>
+                      <td className={`p-3 font-semibold ${statusColor(item.status)}`}>
+                        {item.status}
+                        {item.admin_note ? (
+                          <p className="mt-1 max-w-xs text-xs font-normal text-slate-400">
+                            {item.admin_note}
+                          </p>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* WITHDRAWAL HISTORY */}
+        <section className="mt-8 rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
+          <h2 className="mb-4 text-xl font-bold">Withdrawal History</h2>
+
+          {withdrawals.length === 0 ? (
+            <p className="text-slate-400">Abhi koi withdrawal request nahi hai.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[650px] text-left text-sm">
+                <thead className="border-b border-slate-700 text-slate-400">
+                  <tr>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Method</th>
+                    <th className="p-3">Amount</th>
+                    <th className="p-3">Receiving account</th>
+                    <th className="p-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {withdrawals.map((item) => (
+                    <tr key={item.id} className="border-b border-slate-800">
+                      <td className="p-3">
+                        {new Date(item.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="p-3">{item.payment_method}</td>
+                      <td className="p-3">NPR {Number(item.amount).toLocaleString('en-NP')}</td>
+                      <td className="p-3">
+                        <div>{item.account_name}</div>
+                        <div className="text-slate-400">{item.account_number}</div>
+                      </td>
+                      <td className={`p-3 font-semibold ${statusColor(item.status)}`}>
+                        {item.status}
+                        {item.admin_note ? (
+                          <p className="mt-1 max-w-xs text-xs font-normal text-slate-400">
+                            {item.admin_note}
+                          </p>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </div>
 
-      <style jsx>{`
-        * {
-          box-sizing: border-box;
-        }
-
-        .wallet-page {
-          min-height: 100vh;
-          background: #090b14;
-          color: #f5f6ff;
-          padding-bottom: 30px;
-        }
-
-        .topbar {
-          min-height: 72px;
-          padding: 14px max(5%, calc((100% - 1120px) / 2));
-          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 20px;
-        }
-
-        .brand {
-          color: #fff;
-          font-size: 20px;
-          font-weight: 900;
-          text-decoration: none;
-          letter-spacing: 1px;
-        }
-
-        .brand span {
-          color: #9277ff;
-        }
-
-        nav {
-          display: flex;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 16px;
-        }
-
-        nav a,
-        nav button {
-          color: #c9cbe0;
-          background: transparent;
-          border: 0;
-          text-decoration: none;
-          font: inherit;
-          font-size: 13px;
-          cursor: pointer;
-        }
-
-        nav a:hover,
-        nav button:hover {
-          color: #a895ff;
-        }
-
-        .container {
-          width: min(100% - 32px, 1000px);
-          margin: 0 auto;
-        }
-
-        .page-heading {
-          padding: 35px 0 22px;
-        }
-
-        .eyebrow {
-          color: #a895ff;
-          font-size: 12px;
-          font-weight: 800;
-          letter-spacing: 2px;
-        }
-
-        h1 {
-          font-size: clamp(28px, 5vw, 42px);
-          margin: 8px 0;
-        }
-
-        h2 {
-          margin-top: 0;
-          font-size: 22px;
-        }
-
-        h3 {
-          margin-top: 0;
-        }
-
-        .muted,
-        .small-note {
-          color: #a7abc4;
-          line-height: 1.7;
-        }
-
-        .panel {
-          margin-bottom: 22px;
-          padding: 24px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          border-radius: 18px;
-          background: #111525;
-        }
-
-        .balance-card {
-          margin-bottom: 24px;
-          padding: 28px;
-          border-radius: 20px;
-          background: linear-gradient(120deg, #4b35b9, #22245b 70%, #17203f);
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 20px;
-          box-shadow: 0 15px 40px rgba(62, 45, 160, 0.18);
-        }
-
-        .balance-card p {
-          margin: 0;
-          font-size: 12px;
-          letter-spacing: 1.2px;
-          font-weight: 800;
-        }
-
-        .balance-card h2 {
-          margin: 12px 0;
-          font-size: clamp(30px, 5vw, 40px);
-        }
-
-        .balance-card span {
-          font-size: 12px;
-          color: #e0dcff;
-          line-height: 1.6;
-        }
-
-        .balance-icon {
-          font-size: 46px;
-        }
-
-        .method-grid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 12px;
-          margin: 20px 0;
-        }
-
-        .method {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          text-align: left;
-          color: white;
-          background: #0b0f1e;
-          border: 1px solid #30354c;
-          border-radius: 14px;
-          padding: 15px;
-          cursor: pointer;
-          min-width: 0;
-        }
-
-        .method.active {
-          border-color: #9277ff;
-          box-shadow: 0 0 0 1px #9277ff;
-          background: #191733;
-        }
-
-        .method-icon {
-          width: 42px;
-          height: 42px;
-          border-radius: 12px;
-          display: grid;
-          place-items: center;
-          font-size: 23px;
-          font-weight: 900;
-          flex-shrink: 0;
-        }
-
-        .esewa-icon {
-          color: #fff;
-          background: #43a047;
-        }
-
-        .khalti-icon {
-          color: #fff;
-          background: #6639c7;
-        }
-
-        .method strong,
-        .method small {
-          display: block;
-        }
-
-        .method small {
-          color: #a7abc4;
-          margin-top: 4px;
-          font-size: 11px;
-        }
-
-        .radio-dot {
-          margin-left: auto;
-          width: 22px;
-          height: 22px;
-          border-radius: 50%;
-          border: 1px solid #777b9c;
-          display: grid;
-          place-items: center;
-          font-size: 13px;
-          flex-shrink: 0;
-        }
-
-        .active .radio-dot {
-          background: #9277ff;
-          border-color: #9277ff;
-        }
-
-        .payment-instructions {
-          display: grid;
-          grid-template-columns: minmax(180px, 250px) minmax(0, 1fr);
-          gap: 24px;
-          padding: 20px;
-          margin: 22px 0;
-          border-radius: 16px;
-          background: #0b0f1e;
-          border: 1px solid #252a41;
-        }
-
-        .qr-area {
-          display: grid;
-          place-items: center;
-          min-width: 0;
-        }
-
-        .qr-image {
-          width: 100%;
-          max-width: 230px;
-          aspect-ratio: 1;
-          object-fit: contain;
-          background: white;
-          padding: 8px;
-          border-radius: 12px;
-        }
-
-        .instruction-text p {
-          font-size: 13px;
-          color: #c3c6dc;
-          line-height: 1.65;
-        }
-
-        .receiver {
-          padding: 12px;
-          border-radius: 10px;
-          background: #171d32;
-          display: flex;
-          flex-direction: column;
-          gap: 5px;
-          margin-top: 15px;
-        }
-
-        .receiver span {
-          font-size: 12px;
-          color: #a7abc4;
-        }
-
-        .receiver strong {
-          font-size: 20px;
-          letter-spacing: 1px;
-        }
-
-        .deposit-form {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-
-        .deposit-form label {
-          margin-top: 10px;
-          font-weight: 700;
-          font-size: 13px;
-        }
-
-        .deposit-form input {
-          width: 100%;
-          min-width: 0;
-          border: 1px solid #353b54;
-          border-radius: 10px;
-          padding: 13px;
-          background: #0b0f1e;
-          color: #fff;
-          font: inherit;
-        }
-
-        .deposit-form input:focus {
-          outline: 2px solid #7257ff;
-          border-color: transparent;
-        }
-
-        .deposit-form input[type='file'] {
-          padding: 10px;
-        }
-
-        .quick-amounts {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-          margin: 4px 0 10px;
-        }
-
-        .quick-amounts button,
-        .refresh-button {
-          border: 1px solid #353b54;
-          border-radius: 9px;
-          padding: 9px 12px;
-          background: #171d32;
-          color: #dddff5;
-          cursor: pointer;
-        }
-
-        .quick-amounts button.chosen {
-          border-color: #9277ff;
-          color: white;
-          background: #30265c;
-        }
-
-        .button {
-          display: inline-flex;
-          justify-content: center;
-          align-items: center;
-          text-decoration: none;
-          text-align: center;
-          border: 0;
-          border-radius: 10px;
-          padding: 13px 18px;
-          color: white;
-          background: linear-gradient(100deg, #7257ff, #5140c5);
-          font: inherit;
-          font-weight: 800;
-          cursor: pointer;
-        }
-
-        .submit-button {
-          width: 100%;
-          margin-top: 12px;
-        }
-
-        .button:disabled,
-        .refresh-button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        .selected-file {
-          font-size: 12px;
-          color: #b9b0ff;
-          overflow-wrap: anywhere;
-        }
-
-        .notice {
-          margin-top: 14px;
-          padding: 13px;
-          border-radius: 10px;
-          line-height: 1.6;
-          overflow-wrap: anywhere;
-          font-size: 13px;
-        }
-
-        .success {
-          color: #a8f0d1;
-          background: rgba(32, 201, 151, 0.12);
-          border: 1px solid rgba(32, 201, 151, 0.2);
-        }
-
-        .error {
-          color: #ffc2b7;
-          background: rgba(255, 87, 56, 0.12);
-          border: 1px solid rgba(255, 87, 56, 0.2);
-        }
-
-        .history-heading {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 15px;
-          margin-bottom: 18px;
-        }
-
-        .history-heading h2 {
-          margin-bottom: 4px;
-        }
-
-        .history-heading p {
-          margin-top: 0;
-        }
-
-        .table-wrap {
-          width: 100%;
-          overflow-x: auto;
-        }
-
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 12px;
-        }
-
-        th,
-        td {
-          padding: 13px 10px;
-          text-align: left;
-          border-bottom: 1px solid #2a3045;
-          vertical-align: top;
-        }
-
-        th {
-          color: #a7abc4;
-          font-weight: 700;
-        }
-
-        .transaction-cell {
-          overflow-wrap: anywhere;
-          min-width: 120px;
-        }
-
-        .status {
-          display: inline-block;
-          border-radius: 20px;
-          padding: 5px 9px;
-          font-size: 11px;
-          font-weight: 800;
-          text-transform: uppercase;
-          background: #34384d;
-          color: #e0e2f4;
-        }
-
-        .status-pending {
-          background: #493c19;
-          color: #ffe19a;
-        }
-
-        .status-approved {
-          background: #143d32;
-          color: #a8f0d1;
-        }
-
-        .status-rejected {
-          background: #4a2427;
-          color: #ffc2b7;
-        }
-
-        .admin-note {
-          color: #a7abc4;
-          font-size: 11px;
-          line-height: 1.5;
-          max-width: 180px;
-        }
-
-        .empty-state {
-          padding: 25px 10px;
-          text-align: center;
-          color: #a7abc4;
-        }
-
-        .empty-state span {
-          font-size: 35px;
-        }
-
-        .footer {
-          padding: 20px 0;
-          text-align: center;
-          color: #777d9a;
-          font-size: 12px;
-        }
-
-        @media (max-width: 650px) {
-          .topbar {
-            align-items: flex-start;
-            flex-direction: column;
-          }
-
-          nav {
-            gap: 13px;
-          }
-
-          .panel {
-            padding: 17px;
-          }
-
-          .balance-card {
-            padding: 22px 18px;
-          }
-
-          .payment-instructions {
-            grid-template-columns: 1fr;
-            padding: 15px;
-          }
-
-          .qr-image {
-            max-width: 220px;
-          }
-
-          .method-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .history-heading {
-            align-items: flex-start;
-            flex-direction: column;
-          }
-        }
-      `}</style>
+      {/* FULL-SCREEN QR VIEWER */}
+      {expandedQR && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Full-screen payment QR"
+          onClick={() => setExpandedQR(null)}
+        >
+          <button
+            type="button"
+            aria-label="Close QR viewer"
+            onClick={() => setExpandedQR(null)}
+            className="absolute right-5 top-5 rounded-full bg-slate-800 px-4 py-2 text-2xl hover:bg-slate-700"
+          >
+            ×
+          </button>
+
+          <div
+            className="flex w-full max-w-lg flex-col items-center rounded-2xl border border-slate-700 bg-slate-900 p-5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className="mb-4 text-xl font-bold">
+              {expandedQR.includes('esewa') ? 'eSewa QR Code' : 'Khalti QR Code'}
+            </h2>
+
+            <div className="rounded-xl bg-white p-3">
+              <img
+                src={expandedQR}
+                alt="Enlarged payment QR"
+                className="max-h-[65vh] w-full max-w-[420px] object-contain"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                downloadQR(
+                  expandedQR,
+                  expandedQR.includes('esewa') ? 'esewa-qr.png' : 'khalti-qr.png'
+                )
+              }
+              className="mt-5 w-full rounded-xl bg-violet-600 px-5 py-3 font-bold hover:bg-violet-500"
+            >
+              Download QR Code
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setExpandedQR(null)}
+              className="mt-2 w-full rounded-xl border border-slate-600 px-5 py-3 hover:bg-slate-800"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
