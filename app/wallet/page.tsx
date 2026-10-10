@@ -42,13 +42,15 @@ export default function WalletPage() {
     `NPR ${Number(value || 0).toLocaleString('en-IN')}`;
 
   const loadWallet = useCallback(async (userId: string) => {
-    const client = supabaseBrowser();
+    const maybeClient = supabaseBrowser();
 
-    if (!client) {
+    if (!maybeClient) {
       setHistoryError('Supabase configuration missing hai.');
       setLoading(false);
       return;
     }
+
+    const client = maybeClient;
 
     setLoading(true);
     setHistoryError('');
@@ -97,17 +99,18 @@ export default function WalletPage() {
     }
   }, []);
 
-  // Fixed: use the non-null client inside the async function.
+  // Supabase client ko null-check ke baad stable, non-null variable mein rakho.
   useEffect(() => {
-    const client = supabaseBrowser();
+    const maybeClient = supabaseBrowser();
 
-    if (!client) {
+    if (!maybeClient) {
       setHistoryError('Supabase configuration missing hai.');
       setAuthReady(true);
       setLoading(false);
       return;
     }
 
+    const client = maybeClient as NonNullable<typeof maybeClient>;
     let mounted = true;
 
     async function initialize() {
@@ -117,7 +120,7 @@ export default function WalletPage() {
         if (!mounted) return;
 
         if (error) {
-          setHistoryError(error.message);
+          setHistoryError(`Session error: ${error.message}`);
         }
 
         setUser(data.session?.user ?? null);
@@ -126,6 +129,7 @@ export default function WalletPage() {
         if (mounted) {
           setHistoryError('Session load nahi hua. Dobara try karo.');
           setAuthReady(true);
+          setLoading(false);
         }
       }
     }
@@ -142,6 +146,7 @@ export default function WalletPage() {
       if (!session?.user) {
         setBalance(null);
         setDeposits([]);
+        setLoading(false);
       }
     });
 
@@ -220,13 +225,15 @@ export default function WalletPage() {
       return;
     }
 
-    const client = supabaseBrowser();
+    const maybeClient = supabaseBrowser();
 
-    if (!client) {
+    if (!maybeClient) {
       setMessage('Supabase configuration missing hai.');
       setIsError(true);
       return;
     }
+
+    const client = maybeClient as NonNullable<typeof maybeClient>;
 
     setSubmitting(true);
 
@@ -303,7 +310,7 @@ export default function WalletPage() {
             .from('payment-proofs')
             .remove([uploadedPath]);
         } catch {
-          // Ignore cleanup errors; the original error is more useful.
+          // Original error ko preserve karo.
         }
       }
     } finally {
@@ -312,13 +319,15 @@ export default function WalletPage() {
   }
 
   async function logout() {
-    const client = supabaseBrowser();
+    const maybeClient = supabaseBrowser();
 
-    if (!client) {
+    if (!maybeClient) {
       setMessage('Supabase configuration missing hai.');
       setIsError(true);
       return;
     }
+
+    const client = maybeClient as NonNullable<typeof maybeClient>;
 
     const { error } = await client.auth.signOut();
 
