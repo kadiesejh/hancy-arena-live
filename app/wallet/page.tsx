@@ -1,3 +1,4 @@
+```tsx
 'use client';
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
@@ -57,8 +58,6 @@ export default function WalletPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const [expandedQR, setExpandedQR] = useState<string | null>(null);
-
   const qrImage =
     paymentMethod === 'eSewa' ? '/esewa-qr.png' : '/khalti-qr.png';
 
@@ -115,7 +114,6 @@ export default function WalletPage() {
       if (walletResult.error) throw walletResult.error;
       if (depositResult.error) throw depositResult.error;
 
-      // Withdrawal history may not be available until its SQL table is created.
       if (withdrawalResult.error) {
         setWithdrawals([]);
         console.error(
@@ -206,7 +204,6 @@ export default function WalletPage() {
 
       if (uploadError) throw uploadError;
 
-      // Private bucket ke liye public URL nahi, storage path save karo.
       const { error: insertError } = await client
         .from('wallet_deposits')
         .insert({
@@ -305,7 +302,6 @@ export default function WalletPage() {
     }
   }
 
-  // QR image ko download karne ka function.
   function downloadQR(src: string, name: string) {
     const link = document.createElement('a');
     link.href = src;
@@ -357,10 +353,10 @@ export default function WalletPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-4 py-8 text-white sm:px-6">
-      <div className="mx-auto max-w-5xl">
+    <main className="min-h-screen overflow-x-hidden bg-slate-950 px-4 py-8 text-white sm:px-6">
+      <div className="mx-auto w-full max-w-5xl min-w-0">
         <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <a
               href="/"
               className="text-sm text-violet-300 hover:text-violet-200"
@@ -380,20 +376,20 @@ export default function WalletPage() {
         </header>
 
         {error && (
-          <div className="mb-4 rounded-xl border border-red-500/40 bg-red-950/40 p-4 text-red-200">
+          <div className="mb-4 break-words rounded-xl border border-red-500/40 bg-red-950/40 p-4 text-red-200">
             {error}
           </div>
         )}
 
         {message && (
-          <div className="mb-4 rounded-xl border border-green-500/40 bg-green-950/40 p-4 text-green-200">
+          <div className="mb-4 break-words rounded-xl border border-green-500/40 bg-green-950/40 p-4 text-green-200">
             {message}
           </div>
         )}
 
         <section className="mb-8 rounded-2xl border border-violet-500/30 bg-gradient-to-r from-violet-950 to-slate-900 p-6">
           <p className="text-slate-300">Available wallet balance</p>
-          <h2 className="mt-2 text-4xl font-extrabold">
+          <h2 className="mt-2 break-words text-4xl font-extrabold">
             NPR{' '}
             {balance.toLocaleString('en-NP', {
               maximumFractionDigits: 2,
@@ -404,9 +400,9 @@ export default function WalletPage() {
           </p>
         </section>
 
-        <div className="grid gap-8 lg:grid-cols-2">
+        <div className="grid min-w-0 gap-8 lg:grid-cols-2">
           {/* DEPOSIT */}
-          <section className="rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
+          <section className="min-w-0 rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
             <h2 className="mb-5 text-2xl font-bold">Add Money</h2>
 
             <form onSubmit={handleDeposit} className="space-y-5">
@@ -432,53 +428,44 @@ export default function WalletPage() {
                 </div>
               </div>
 
-              {/* QR CODE: ORIGINAL SIZE MAINTAINED */}
-              <div className="rounded-xl border border-slate-700 bg-slate-950 p-4 text-center">
+              {/* RESPONSIVE QR: 180px MOBILE, 220px LAPTOP */}
+              <div className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 p-3 text-center sm:p-4">
                 <p className="mb-3 text-sm text-slate-300">
                   {paymentMethod} QR Code
                 </p>
 
-                <button
-                  type="button"
-                  onClick={() => setExpandedQR(qrImage)}
-                  className="mx-auto block rounded-xl bg-white p-2"
-                  aria-label={`Open ${paymentMethod} QR full screen`}
-                >
-                  <img
-                    src={qrImage}
-                    alt={`${paymentMethod} payment QR`}
-                    className="h-44 w-44 object-contain"
-                  />
-                </button>
+                <div className="mx-auto flex w-full min-w-0 justify-center">
+                  <div className="flex h-[180px] w-[180px] max-w-full shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-2 md:h-[220px] md:w-[220px]">
+                    <img
+                      src={qrImage}
+                      alt={`${paymentMethod} payment QR`}
+                      width={220}
+                      height={220}
+                      draggable={false}
+                      className="pointer-events-none block h-full w-full select-none object-contain"
+                    />
+                  </div>
+                </div>
 
-                <p className="mt-3 text-sm text-slate-300">
+                <p className="mt-3 break-words text-sm text-slate-300">
                   Receiver number: <strong>{RECEIVER_NUMBER}</strong>
                 </p>
 
-                <div className="mt-3 flex flex-wrap justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setExpandedQR(qrImage)}
-                    className="rounded-lg bg-slate-700 px-4 py-2 text-sm hover:bg-slate-600"
-                  >
-                    Enlarge QR
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      downloadQR(
-                        qrImage,
-                        paymentMethod === 'eSewa'
-                          ? 'esewa-qr.png'
-                          : 'khalti-qr.png'
-                      )
-                    }
-                    className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold hover:bg-violet-500"
-                  >
-                    Download QR
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadQR(
+                      qrImage,
+                      paymentMethod === 'eSewa'
+                        ? 'esewa-qr.png'
+                        : 'khalti-qr.png'
+                    )
+                  }
+                  className="mt-3 inline-flex max-w-full items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold hover:bg-violet-500"
+                >
+                  <span aria-hidden="true">⬇</span>
+                  Download QR
+                </button>
               </div>
 
               <div>
@@ -497,7 +484,7 @@ export default function WalletPage() {
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   placeholder="Enter amount"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
+                  className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
                 />
               </div>
 
@@ -515,7 +502,7 @@ export default function WalletPage() {
                   value={transactionId}
                   onChange={(e) => setTransactionId(e.target.value)}
                   placeholder="Enter payment reference"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
+                  className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
                 />
               </div>
 
@@ -532,7 +519,7 @@ export default function WalletPage() {
                   accept="image/*"
                   required
                   onChange={(e) => setProof(e.target.files?.[0] ?? null)}
-                  className="block w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-white"
+                  className="block w-full min-w-0 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-white"
                 />
               </div>
 
@@ -552,7 +539,7 @@ export default function WalletPage() {
           </section>
 
           {/* WITHDRAW */}
-          <section className="rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
+          <section className="min-w-0 rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
             <h2 className="mb-2 text-2xl font-bold">Withdraw Money</h2>
             <p className="mb-5 text-sm text-slate-400">
               Available balance: NPR {balance.toLocaleString('en-NP')}
@@ -576,7 +563,7 @@ export default function WalletPage() {
                   value={withdrawAmount}
                   onChange={(e) => setWithdrawAmount(e.target.value)}
                   placeholder="Enter amount"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
+                  className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
                 />
               </div>
 
@@ -616,7 +603,7 @@ export default function WalletPage() {
                   value={accountName}
                   onChange={(e) => setAccountName(e.target.value)}
                   placeholder="Name on your account"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
+                  className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
                 />
               </div>
 
@@ -634,7 +621,7 @@ export default function WalletPage() {
                   value={accountNumber}
                   onChange={(e) => setAccountNumber(e.target.value)}
                   placeholder="Enter receiving number"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
+                  className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 p-3 outline-none focus:border-violet-500"
                 />
               </div>
 
@@ -656,13 +643,13 @@ export default function WalletPage() {
         </div>
 
         {/* DEPOSIT HISTORY */}
-        <section className="mt-8 rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
+        <section className="mt-8 min-w-0 rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
           <h2 className="mb-4 text-xl font-bold">Deposit History</h2>
 
           {deposits.length === 0 ? (
             <p className="text-slate-400">Abhi koi deposit request nahi hai.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="max-w-full overflow-x-auto">
               <table className="w-full min-w-[600px] text-left text-sm">
                 <thead className="border-b border-slate-700 text-slate-400">
                   <tr>
@@ -683,10 +670,8 @@ export default function WalletPage() {
                       <td className="p-3">
                         NPR {Number(item.amount).toLocaleString('en-NP')}
                       </td>
-                      <td className="p-3">{item.transaction_id}</td>
-                      <td
-                        className={`p-3 font-semibold ${statusColor(item.status)}`}
-                      >
+                      <td className="break-all p-3">{item.transaction_id}</td>
+                      <td className={`p-3 font-semibold ${statusColor(item.status)}`}>
                         {item.status}
                         {item.admin_note ? (
                           <p className="mt-1 max-w-xs text-xs font-normal text-slate-400">
@@ -703,7 +688,7 @@ export default function WalletPage() {
         </section>
 
         {/* WITHDRAWAL HISTORY */}
-        <section className="mt-8 rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
+        <section className="mt-8 min-w-0 rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6">
           <h2 className="mb-4 text-xl font-bold">Withdrawal History</h2>
 
           {withdrawals.length === 0 ? (
@@ -711,7 +696,7 @@ export default function WalletPage() {
               Abhi koi withdrawal request nahi hai.
             </p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="max-w-full overflow-x-auto">
               <table className="w-full min-w-[650px] text-left text-sm">
                 <thead className="border-b border-slate-700 text-slate-400">
                   <tr>
@@ -734,13 +719,11 @@ export default function WalletPage() {
                       </td>
                       <td className="p-3">
                         <div>{item.account_name}</div>
-                        <div className="text-slate-400">
+                        <div className="break-all text-slate-400">
                           {item.account_number}
                         </div>
                       </td>
-                      <td
-                        className={`p-3 font-semibold ${statusColor(item.status)}`}
-                      >
+                      <td className={`p-3 font-semibold ${statusColor(item.status)}`}>
                         {item.status}
                         {item.admin_note ? (
                           <p className="mt-1 max-w-xs text-xs font-normal text-slate-400">
@@ -756,68 +739,7 @@ export default function WalletPage() {
           )}
         </section>
       </div>
-
-      {/* FULL-SCREEN QR VIEWER */}
-      {expandedQR && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Full-screen payment QR"
-          onClick={() => setExpandedQR(null)}
-        >
-          <button
-            type="button"
-            aria-label="Close QR viewer"
-            onClick={() => setExpandedQR(null)}
-            className="absolute right-5 top-5 rounded-full bg-slate-800 px-4 py-2 text-2xl hover:bg-slate-700"
-          >
-            ×
-          </button>
-
-          <div
-            className="flex w-full max-w-lg flex-col items-center rounded-2xl border border-slate-700 bg-slate-900 p-5"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h2 className="mb-4 text-xl font-bold">
-              {expandedQR.includes('esewa')
-                ? 'eSewa QR Code'
-                : 'Khalti QR Code'}
-            </h2>
-
-            <div className="rounded-xl bg-white p-3">
-              <img
-                src={expandedQR}
-                alt="Enlarged payment QR"
-                className="max-h-[65vh] w-full max-w-[420px] object-contain"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                downloadQR(
-                  expandedQR,
-                  expandedQR.includes('esewa')
-                    ? 'esewa-qr.png'
-                    : 'khalti-qr.png'
-                )
-              }
-              className="mt-5 w-full rounded-xl bg-violet-600 px-5 py-3 font-bold hover:bg-violet-500"
-            >
-              Download QR Code
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setExpandedQR(null)}
-              className="mt-2 w-full rounded-xl border border-slate-600 px-5 py-3 hover:bg-slate-800"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
     </main>
   );
 }
+```
