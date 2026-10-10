@@ -1,4 +1,3 @@
-
 'use client';
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
@@ -119,7 +118,10 @@ export default function WalletPage() {
       // Withdrawal history may not be available until its SQL table is created.
       if (withdrawalResult.error) {
         setWithdrawals([]);
-        console.error('Withdrawal history:', withdrawalResult.error.message);
+        console.error(
+          'Withdrawal history:',
+          withdrawalResult.error.message
+        );
       } else {
         setWithdrawals((withdrawalResult.data ?? []) as Withdrawal[]);
       }
@@ -218,7 +220,9 @@ export default function WalletPage() {
 
       if (insertError) throw insertError;
 
-      setMessage('Deposit request submit ho gayi! Admin verification pending hai.');
+      setMessage(
+        'Deposit request submit ho gayi! Admin verification pending hai.'
+      );
       setAmount('');
       setTransactionId('');
       setProof(null);
@@ -301,6 +305,7 @@ export default function WalletPage() {
     }
   }
 
+  // QR image ko download karne ka function.
   function downloadQR(src: string, name: string) {
     const link = document.createElement('a');
     link.href = src;
@@ -356,7 +361,10 @@ export default function WalletPage() {
       <div className="mx-auto max-w-5xl">
         <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <a href="/" className="text-sm text-violet-300 hover:text-violet-200">
+            <a
+              href="/"
+              className="text-sm text-violet-300 hover:text-violet-200"
+            >
               ← Hancy Arena Home
             </a>
             <h1 className="mt-2 text-3xl font-extrabold">My Wallet</h1>
@@ -386,7 +394,10 @@ export default function WalletPage() {
         <section className="mb-8 rounded-2xl border border-violet-500/30 bg-gradient-to-r from-violet-950 to-slate-900 p-6">
           <p className="text-slate-300">Available wallet balance</p>
           <h2 className="mt-2 text-4xl font-extrabold">
-            NPR {balance.toLocaleString('en-NP', { maximumFractionDigits: 2 })}
+            NPR{' '}
+            {balance.toLocaleString('en-NP', {
+              maximumFractionDigits: 2,
+            })}
           </h2>
           <p className="mt-3 text-sm text-slate-400">
             Deposit aur withdrawal requests ka status yahin dekh sakte ho.
@@ -421,6 +432,7 @@ export default function WalletPage() {
                 </div>
               </div>
 
+              {/* QR CODE: ORIGINAL SIZE MAINTAINED */}
               <div className="rounded-xl border border-slate-700 bg-slate-950 p-4 text-center">
                 <p className="mb-3 text-sm text-slate-300">
                   {paymentMethod} QR Code
@@ -451,12 +463,15 @@ export default function WalletPage() {
                   >
                     Enlarge QR
                   </button>
+
                   <button
                     type="button"
                     onClick={() =>
                       downloadQR(
                         qrImage,
-                        paymentMethod === 'eSewa' ? 'esewa-qr.png' : 'khalti-qr.png'
+                        paymentMethod === 'eSewa'
+                          ? 'esewa-qr.png'
+                          : 'khalti-qr.png'
                       )
                     }
                     className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold hover:bg-violet-500"
@@ -467,7 +482,10 @@ export default function WalletPage() {
               </div>
 
               <div>
-                <label htmlFor="deposit-amount" className="mb-2 block text-sm text-slate-300">
+                <label
+                  htmlFor="deposit-amount"
+                  className="mb-2 block text-sm text-slate-300"
+                >
                   Amount (NPR)
                 </label>
                 <input
@@ -484,7 +502,10 @@ export default function WalletPage() {
               </div>
 
               <div>
-                <label htmlFor="transaction-id" className="mb-2 block text-sm text-slate-300">
+                <label
+                  htmlFor="transaction-id"
+                  className="mb-2 block text-sm text-slate-300"
+                >
                   Transaction ID / Reference
                 </label>
                 <input
@@ -499,7 +520,10 @@ export default function WalletPage() {
               </div>
 
               <div>
-                <label htmlFor="payment-proof" className="mb-2 block text-sm text-slate-300">
+                <label
+                  htmlFor="payment-proof"
+                  className="mb-2 block text-sm text-slate-300"
+                >
                   Payment screenshot (max 5 MB)
                 </label>
                 <input
@@ -536,7 +560,10 @@ export default function WalletPage() {
 
             <form onSubmit={handleWithdrawal} className="space-y-4">
               <div>
-                <label htmlFor="withdraw-amount" className="mb-2 block text-sm text-slate-300">
+                <label
+                  htmlFor="withdraw-amount"
+                  className="mb-2 block text-sm text-slate-300"
+                >
                   Withdrawal amount (NPR)
                 </label>
                 <input
@@ -576,7 +603,10 @@ export default function WalletPage() {
               </div>
 
               <div>
-                <label htmlFor="account-name" className="mb-2 block text-sm text-slate-300">
+                <label
+                  htmlFor="account-name"
+                  className="mb-2 block text-sm text-slate-300"
+                >
                   Account holder name
                 </label>
                 <input
@@ -591,7 +621,10 @@ export default function WalletPage() {
               </div>
 
               <div>
-                <label htmlFor="account-number" className="mb-2 block text-sm text-slate-300">
+                <label
+                  htmlFor="account-number"
+                  className="mb-2 block text-sm text-slate-300"
+                >
                   {withdrawMethod} mobile / account number
                 </label>
                 <input
@@ -647,9 +680,13 @@ export default function WalletPage() {
                         {new Date(item.created_at).toLocaleDateString()}
                       </td>
                       <td className="p-3">{item.payment_method}</td>
-                      <td className="p-3">NPR {Number(item.amount).toLocaleString('en-NP')}</td>
+                      <td className="p-3">
+                        NPR {Number(item.amount).toLocaleString('en-NP')}
+                      </td>
                       <td className="p-3">{item.transaction_id}</td>
-                      <td className={`p-3 font-semibold ${statusColor(item.status)}`}>
+                      <td
+                        className={`p-3 font-semibold ${statusColor(item.status)}`}
+                      >
                         {item.status}
                         {item.admin_note ? (
                           <p className="mt-1 max-w-xs text-xs font-normal text-slate-400">
@@ -670,7 +707,9 @@ export default function WalletPage() {
           <h2 className="mb-4 text-xl font-bold">Withdrawal History</h2>
 
           {withdrawals.length === 0 ? (
-            <p className="text-slate-400">Abhi koi withdrawal request nahi hai.</p>
+            <p className="text-slate-400">
+              Abhi koi withdrawal request nahi hai.
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[650px] text-left text-sm">
@@ -690,12 +729,18 @@ export default function WalletPage() {
                         {new Date(item.created_at).toLocaleDateString()}
                       </td>
                       <td className="p-3">{item.payment_method}</td>
-                      <td className="p-3">NPR {Number(item.amount).toLocaleString('en-NP')}</td>
+                      <td className="p-3">
+                        NPR {Number(item.amount).toLocaleString('en-NP')}
+                      </td>
                       <td className="p-3">
                         <div>{item.account_name}</div>
-                        <div className="text-slate-400">{item.account_number}</div>
+                        <div className="text-slate-400">
+                          {item.account_number}
+                        </div>
                       </td>
-                      <td className={`p-3 font-semibold ${statusColor(item.status)}`}>
+                      <td
+                        className={`p-3 font-semibold ${statusColor(item.status)}`}
+                      >
                         {item.status}
                         {item.admin_note ? (
                           <p className="mt-1 max-w-xs text-xs font-normal text-slate-400">
@@ -735,7 +780,9 @@ export default function WalletPage() {
             onClick={(event) => event.stopPropagation()}
           >
             <h2 className="mb-4 text-xl font-bold">
-              {expandedQR.includes('esewa') ? 'eSewa QR Code' : 'Khalti QR Code'}
+              {expandedQR.includes('esewa')
+                ? 'eSewa QR Code'
+                : 'Khalti QR Code'}
             </h2>
 
             <div className="rounded-xl bg-white p-3">
@@ -751,7 +798,9 @@ export default function WalletPage() {
               onClick={() =>
                 downloadQR(
                   expandedQR,
-                  expandedQR.includes('esewa') ? 'esewa-qr.png' : 'khalti-qr.png'
+                  expandedQR.includes('esewa')
+                    ? 'esewa-qr.png'
+                    : 'khalti-qr.png'
                 )
               }
               className="mt-5 w-full rounded-xl bg-violet-600 px-5 py-3 font-bold hover:bg-violet-500"
