@@ -1,49 +1,18 @@
 
 'use client';
 
-import React, { FormEvent, useCallback, useEffect, useState } from 'react';
-import { supabaseBrowser } from '../lib/supabase';
-
-const games = [
-  {
-    name: 'Mobile Legends',
-    icon: '⚔️',
-    color: '#8b6cff',
-    description: '5v5 MOBA',
-    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Mobile_Legends_Logo.webp',
-  },
-  {
-    name: 'PUBG Mobile',
-    icon: '🎯',
-    color: '#f5a623',
-    description: 'Battle Royale',
-    logo: 'https://www.pubgmobile.com/images/event/brandassets/down-logo1.png',
-  },
-  {
-    name: 'Free Fire',
-    icon: '🔥',
-    color: '#ff5738',
-    description: 'Survival Battle',
-    logo: 'https://commons.wikimedia.org/wiki/Special:FilePath/Freefirelogo.png',
-  },
-  {
-    name: 'Ludo King',
-    icon: '🎲',
-    color: '#20c997',
-    description: 'Classic Board Game',
-    logo: 'https://brandlogos.sgp1.digitaloceanspaces.com/png/arcticons/ludo-king-400.png',
-  },
-];
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { supabaseBrowser } from './lib/supabase';
 
 type Tournament = {
   id: string;
   name: string;
   game_name?: string | null;
   format?: string | null;
-  entry_fee_npr?: number | null;
-  prize_pool_npr?: number | null;
-  entry_fee?: number | null;
-  prize_pool?: number | null;
+  entry_fee_npr?: number | string | null;
+  prize_pool_npr?: number | string | null;
+  entry_fee?: number | string | null;
+  prize_pool?: number | string | null;
   start_at?: string | null;
   status?: string | null;
 };
@@ -52,181 +21,254 @@ type Registration = {
   id: string;
   user_id: string;
   tournament_id: string;
-  team_name: string;
+  team_name?: string | null;
   captain_name?: string | null;
   phone?: string | null;
-  tournament?: Tournament;
+  tournament?: Tournament | null;
 };
 
 type Player = {
-  id: string;
+  id?: string;
   player_name?: string | null;
   email?: string | null;
   game_name?: string | null;
   game_id?: string | null;
 };
 
-export default function Home() {
-  const [selectedGame, setSelectedGame] = useState('All Games');
+const games = [
+  {
+    name: 'Mobile Legends',
+    short: 'MLBB',
+    icon: '⚔️',
+    color: '#8b5cf6',
+    description: '5v5 MOBA',
+  },
+  {
+    name: 'PUBG Mobile',
+    short: 'PUBG',
+    icon: '🎯',
+    color: '#f5a623',
+    description: 'Battle Royale',
+  },
+  {
+    name: 'Free Fire',
+    short: 'FREE FIRE',
+    icon: '🔥',
+    color: '#ff5738',
+    description: 'Survival Battle',
+  },
+  {
+    name: 'Ludo King',
+    short: 'LUDO',
+    icon: '🎲',
+    color: '#20c997',
+    description: 'Classic Board Game',
+  },
+];
+
+const supabase = supabaseBrowser();
+
+function money(value: number | string | null | undefined) {
+  const amount = Number(value ?? 0);
+  return `NPR ${Number.isFinite(amount) ? amount.toLocaleString('en-IN') : '0'}`;
+}
+
+function gameName(tournament: Tournament) {
+  if (tournament.game_name) return tournament.game_name;
+
+  const name = tournament.name.toLowerCase();
+
+  if (name.includes('mobile legends') || name.includes('mlbb')) {
+    return 'Mobile Legends';
+  }
+  if (name.includes('pubg')) return 'PUBG Mobile';
+  if (name.includes('free fire')) return 'Free Fire';
+  if (name.includes('ludo')) return 'Ludo King';
+
+  return 'Other';
+}
+
+function fee(tournament: Tournament) {
+  return tournament.entry_fee_npr ?? tournament.entry_fee ?? 0;
+}
+
+function prize(tournament: Tournament) {
+  return tournament.prize_pool_npr ?? tournament.prize_pool ?? 0;
+}
+
+function normalizedStatus(status?: string | null) {
+  return (status || 'open').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function canRegister(status?: string | null) {
+  const value = normalizedStatus(status);
+
+  return [
+    'open',
+    'approved',
+    'registration_open',
+    'registration',
+    'upcoming_open',
+  ].includes(value);
+}
+
+function statusLabel(status?: string | null) {
+  const value = normalizedStatus(status);
+
+  const labels: Record<string, string> = {
+    open: 'REGISTRATION OPEN',
+    approved: 'REGISTRATION OPEN',
+    registration_open: 'REGISTRATION OPEN',
+    registration: 'REGISTRATION OPEN',
+    upcoming: 'UPCOMING',
+    live: 'LIVE NOW',
+    completed: 'COMPLETED',
+    finished: 'COMPLETED',
+    pending: 'PENDING REVIEW',
+    pending_verification: 'PENDING REVIEW',
+    rejected: 'REJECTED',
+    full: 'SLOTS FULL',
+    cancelled: 'CANCELLED',
+  };
+
+  return labels[value] || value.replace(/_/g, ' ').toUpperCase();
+}
+
+function dateLabel(value?: string | null) {
+  if (!value) return 'Date to be announced';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date to be announced';
+
+  return date.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export default function HomePage() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [loadingTournaments, setLoadingTournaments] = useState(true);
+  const [selectedGame, setSelectedGame] = useState('All Games');
+  const [search, setSearch] = useState('');
 
   const [user, setUser] = useState<any>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [authMode, setAuthMode] = useState<'signup' | 'signin'>('signup');
-  const [playerName, setPlayerName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [msg, setMsg] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authMessage, setAuthMessage] = useState('');
+  const [authError, setAuthError] = useState('');
 
-  const [selectedTournament, setSelectedTournament] =
-    useState<Tournament | null>(null);
-  const [captainName, setCaptainName] = useState('');
-  const [gameId, setGameId] = useState('');
+  const [player, setPlayer] = useState<Player>({});
+  const [registrations, setRegistrations] = useState<Registration[]>([]);
+  const [loadingRegistrations, setLoadingRegistrations] = useState(false);
+
+  const [activeTournament, setActiveTournament] = useState<Tournament | null>(null);
   const [teamName, setTeamName] = useState('');
+  const [captainName, setCaptainName] = useState('');
   const [phone, setPhone] = useState('');
-  const [registrationMsg, setRegistrationMsg] = useState('');
-  const [registrationSuccess, setRegistrationSuccess] = useState(false);
-  const [registrationBusy, setRegistrationBusy] = useState(false);
+  const [gameId, setGameId] = useState('');
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const [registerMessage, setRegisterMessage] = useState('');
+  const [registerError, setRegisterError] = useState('');
 
-  const [myRegistrations, setMyRegistrations] = useState<Registration[]>([]);
-  const [loadingMyRegistrations, setLoadingMyRegistrations] = useState(false);
-  const [myRegistrationsError, setMyRegistrationsError] = useState('');
-  const [registrationRefresh, setRegistrationRefresh] = useState(0);
-  const [profile, setProfile] = useState<Player | null>(null);
+  const loadTournaments = useCallback(async () => {
+    setLoadingTournaments(true);
 
-  const getGameName = useCallback((t: Tournament) => {
-    if (typeof t.game_name === 'string' && t.game_name.trim()) {
-      const found = games.find(
-        (game) => game.name.toLowerCase() === t.game_name!.trim().toLowerCase()
-      );
-      return found?.name || t.game_name.trim();
+    const { data, error } = await supabase
+      .from('tournaments')
+      .select('*')
+      .order('start_at', { ascending: true });
+
+    if (error) {
+      console.error('Tournament loading error:', error.message);
+      setTournaments([]);
+    } else {
+      setTournaments((data || []) as Tournament[]);
     }
 
-    const name = (t.name || '').toLowerCase();
-
-    if (name.includes('pubg')) return 'PUBG Mobile';
-    if (name.includes('free fire') || name.includes('freefire')) return 'Free Fire';
-    if (name.includes('ludo')) return 'Ludo King';
-
-    return 'Mobile Legends';
+    setLoadingTournaments(false);
   }, []);
 
-  const getFee = (t: Tournament) =>
-    Number(t.entry_fee_npr ?? t.entry_fee ?? 0);
+  const refreshRegistrations = useCallback(async (userId: string) => {
+    setLoadingRegistrations(true);
 
-  const getPrize = (t: Tournament) =>
-    Number(t.prize_pool_npr ?? t.prize_pool ?? 0);
+    const { data, error } = await supabase
+      .from('registrations')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
 
-  const formatMoney = (amount: number) =>
-    `NPR ${amount.toLocaleString('en-IN')}`;
-
-  const formatDate = (value?: string | null) => {
-    if (!value) return 'Date to be announced';
-
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) return 'Date to be announced';
-
-    return date.toLocaleString();
-  };
-
-  const normalizeStatus = (status?: string | null) =>
-    String(status || 'open').trim().toLowerCase().replace(/[\s-]+/g, '_');
-
-  const isRegistrationOpen = (t: Tournament) => {
-    const status = normalizeStatus(t.status);
-
-    return ['open', 'registration_open'].includes(status);
-  };
-
-  const getStatusLabel = (status?: string | null) => {
-    const normalized = normalizeStatus(status);
-
-    const labels: Record<string, string> = {
-      open: 'Registration Open',
-      registration_open: 'Registration Open',
-      pending_verification: 'Pending Review',
-      pending: 'Pending',
-      approved: 'Approved',
-      live: 'Live Now',
-      full: 'Slots Full',
-      closed: 'Closed',
-      completed: 'Completed',
-      rejected: 'Rejected',
-      cancelled: 'Cancelled',
-    };
-
-    return labels[normalized] || String(status || 'Open').replace(/_/g, ' ');
-  };
-
-  const refreshRegistrations = () =>
-    setRegistrationRefresh((value) => value + 1);
-
-  useEffect(() => {
-    const sb = supabaseBrowser();
-
-    if (!sb) {
-      setMsg('Supabase configuration missing. Check environment variables.');
-      setLoadingTournaments(false);
-      setAuthReady(true);
+    if (error) {
+      console.error('Registration loading error:', error.message);
+      setRegistrations([]);
+      setLoadingRegistrations(false);
       return;
     }
 
-    let mounted = true;
+    const rows = (data || []) as Registration[];
+    const tournamentIds = Array.from(
+      new Set(rows.map((row) => row.tournament_id).filter(Boolean))
+    );
 
-    async function initialize() {
-      try {
-        const client = sb!;
+    let tournamentMap: Record<string, Tournament> = {};
 
-        const [sessionResult, tournamentResult] = await Promise.all([
-          client.auth.getSession(),
-          client.from('tournaments').select('*').order('start_at', {
-            ascending: true,
-          }),
-        ]);
+    if (tournamentIds.length > 0) {
+      const { data: tournamentData } = await supabase
+        .from('tournaments')
+        .select('*')
+        .in('id', tournamentIds);
 
-        if (!mounted) return;
-
-        if (sessionResult.error) {
-          setMsg(`Session error: ${sessionResult.error.message}`);
-        }
-
-        setUser(sessionResult.data.session?.user ?? null);
-
-        if (tournamentResult.error) {
-          setMsg(`Tournament loading error: ${tournamentResult.error.message}`);
-        } else {
-          setTournaments((tournamentResult.data || []) as Tournament[]);
-        }
-      } catch {
-        if (mounted) {
-          setMsg('Website data load nahi ho paya. Refresh karke try karo.');
-        }
-      } finally {
-        if (mounted) {
-          setLoadingTournaments(false);
-          setAuthReady(true);
-        }
+      for (const tournament of (tournamentData || []) as Tournament[]) {
+        tournamentMap[tournament.id] = tournament;
       }
     }
 
-    void initialize();
+    setRegistrations(
+      rows.map((row) => ({
+        ...row,
+        tournament: tournamentMap[row.tournament_id] || null,
+      }))
+    );
 
-    const {
-      data: { subscription },
-    } = sb.auth.onAuthStateChange((_event, session) => {
+    setLoadingRegistrations(false);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function initialize() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
       if (!mounted) return;
 
       setUser(session?.user ?? null);
+      setAuthReady(true);
+      await loadTournaments();
 
       if (session?.user) {
-        const savedName = String(session.user.user_metadata?.player_name || '');
-        if (savedName) setCaptainName(savedName);
+        await refreshRegistrations(session.user.id);
+      }
+    }
+
+    initialize();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setAuthReady(true);
+
+      if (session?.user) {
+        void refreshRegistrations(session.user.id);
       } else {
-        setProfile(null);
-        setMyRegistrations([]);
+        setRegistrations([]);
+        setPlayer({});
       }
     });
 
@@ -234,1127 +276,1143 @@ export default function Home() {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [loadTournaments, refreshRegistrations]);
 
   useEffect(() => {
-    if (!authReady || !user?.id) {
-      setProfile(null);
-      return;
-    }
+    let cancelled = false;
 
-    const sb = supabaseBrowser();
-    if (!sb) return;
+    async function loadPlayer() {
+      if (!user) {
+        setPlayer({});
+        return;
+      }
 
-    let mounted = true;
-
-    async function loadProfile() {
-      const client = sb!;
-
-      const { data, error } = await client
+      const { data, error } = await supabase
         .from('players')
         .select('*')
         .eq('id', user.id)
         .maybeSingle();
 
-      if (!mounted) return;
+      if (cancelled) return;
 
       if (error) {
-        setProfile(null);
-        return;
+        console.error('Player profile loading error:', error.message);
       }
 
-      setProfile((data || null) as Player | null);
+      setPlayer((data || {}) as Player);
+      setCaptainName((data as Player | null)?.player_name || '');
     }
 
-    void loadProfile();
+    loadPlayer();
 
     return () => {
-      mounted = false;
+      cancelled = true;
     };
-  }, [authReady, user?.id]);
+  }, [user]);
 
-  useEffect(() => {
-    let mounted = true;
+  const filteredTournaments = useMemo(() => {
+    return tournaments.filter((tournament) => {
+      const matchesGame =
+        selectedGame === 'All Games' ||
+        gameName(tournament).toLowerCase() === selectedGame.toLowerCase();
 
-    async function loadMyRegistrations() {
-      if (!authReady || !user?.id) {
-        setMyRegistrations([]);
-        setLoadingMyRegistrations(false);
-        setMyRegistrationsError('');
-        return;
-      }
+      const query = search.trim().toLowerCase();
+      const matchesSearch =
+        !query ||
+        tournament.name.toLowerCase().includes(query) ||
+        gameName(tournament).toLowerCase().includes(query);
 
-      const sb = supabaseBrowser();
+      return matchesGame && matchesSearch;
+    });
+  }, [tournaments, selectedGame, search]);
 
-      if (!sb) {
-        setMyRegistrationsError('Supabase connection missing hai.');
-        setLoadingMyRegistrations(false);
-        return;
-      }
+  const openTournaments = tournaments.filter((t) =>
+    canRegister(t.status)
+  ).length;
 
-      setLoadingMyRegistrations(true);
-      setMyRegistrationsError('');
+  const handleAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthLoading(true);
+    setAuthError('');
+    setAuthMessage('');
 
-      try {
-        const client = sb!;
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get('email') || '').trim();
+    const password = String(form.get('password') || '');
+    const name = String(form.get('player_name') || '').trim();
 
-        const { data, error } = await client
-          .from('registrations')
-          .select('id, user_id, tournament_id, team_name, captain_name, phone')
-          .eq('user_id', user.id);
-
-        if (!mounted) return;
-
-        if (error) {
-          setMyRegistrations([]);
-          setMyRegistrationsError(error.message);
+    try {
+      if (authMode === 'signup') {
+        if (!name) {
+          setAuthError('Please enter your player name.');
           return;
         }
 
-        const rows = (data || []) as Registration[];
-        const tournamentIds = [...new Set(rows.map((row) => row.tournament_id))];
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              player_name: name,
+            },
+          },
+        });
 
-        let tournamentMap = new Map<string, Tournament>();
+        if (error) throw error;
 
-        if (tournamentIds.length) {
-          const { data: tournamentData, error: tournamentError } = await client
-            .from('tournaments')
-            .select('*')
-            .in('id', tournamentIds);
+        if (data.user && data.session) {
+          const { error: profileError } = await supabase
+            .from('players')
+            .upsert(
+              {
+                id: data.user.id,
+                player_name: name,
+                email,
+              },
+              { onConflict: 'id' }
+            );
 
-          if (!mounted) return;
-
-          if (tournamentError) {
-            setMyRegistrationsError(tournamentError.message);
-            setMyRegistrations([]);
-            return;
+          if (profileError) {
+            console.error('Profile save error:', profileError.message);
           }
 
-          tournamentMap = new Map(
-            ((tournamentData || []) as Tournament[]).map((item) => [
-              item.id,
-              item,
-            ])
-          );
-        }
-
-        if (!mounted) return;
-
-        setMyRegistrations(
-          rows.map((row) => ({
-            ...row,
-            tournament: tournamentMap.get(row.tournament_id),
-          }))
-        );
-      } catch {
-        if (mounted) {
-          setMyRegistrationsError(
-            'Registrations load nahi hui. Dobara try karo.'
-          );
-        }
-      } finally {
-        if (mounted) setLoadingMyRegistrations(false);
-      }
-    }
-
-    void loadMyRegistrations();
-
-    return () => {
-      mounted = false;
-    };
-  }, [authReady, user?.id, registrationRefresh]);
-
-  const filteredTournaments = tournaments.filter((tournament) => {
-    if (selectedGame === 'All Games') return true;
-    return getGameName(tournament) === selectedGame;
-  });
-
-  async function handleAuth(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setMsg('');
-    setBusy(true);
-
-    try {
-      const sb = supabaseBrowser();
-
-      if (!sb) {
-        setMsg('Supabase configuration missing hai.');
-        return;
-      }
-
-      const cleanEmail = email.trim().toLowerCase();
-
-      if (authMode === 'signup') {
-        const cleanName = playerName.trim();
-
-        if (cleanName.length < 2) {
-          setMsg('Player name kam se kam 2 characters ka hona chahiye.');
-          return;
-        }
-
-        const { data, error } = await sb.auth.signUp({
-          email: cleanEmail,
-          password,
-          options: { data: { player_name: cleanName } },
-        });
-
-        if (error) {
-          setMsg(`Signup error: ${error.message}`);
-          return;
-        }
-
-        if (data.session && data.user) {
-          setUser(data.user);
-          setCaptainName(cleanName);
-          setMsg('Account created successfully!');
-          setPlayerName('');
-          setEmail('');
-          setPassword('');
+          setAuthMessage('Account created successfully!');
         } else {
-          setMsg(
-            'Account request successful. Email confirmation enabled hai toh email verify karke Sign In karo.'
+          setAuthMessage(
+            'Account created. Please check your email if confirmation is required, then sign in.'
           );
-          setAuthMode('signin');
-          setPassword('');
         }
       } else {
-        const { data, error } = await sb.auth.signInWithPassword({
-          email: cleanEmail,
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
           password,
         });
 
-        if (error) {
-          setMsg(`Sign in error: ${error.message}`);
-          return;
-        }
+        if (error) throw error;
 
-        setUser(data.user);
-        setCaptainName(String(data.user.user_metadata?.player_name || ''));
-        setMsg('Login successful!');
-        setEmail('');
-        setPassword('');
-        refreshRegistrations();
+        setAuthMessage('Login successful!');
       }
-    } catch {
-      setMsg('Authentication failed. Dobara try karo.');
+    } catch (error: any) {
+      setAuthError(error?.message || 'Authentication failed. Please try again.');
     } finally {
-      setBusy(false);
+      setAuthLoading(false);
     }
-  }
+  };
 
-  async function handleRegistration(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setRegistrationMsg('');
-    setRegistrationSuccess(false);
-
-    if (!selectedTournament) {
-      setRegistrationMsg('Pehle tournament select karo.');
-      return;
-    }
-
-    if (!user?.id) {
-      setRegistrationMsg('Pehle Sign In karo.');
-      document.getElementById('login')?.scrollIntoView({ behavior: 'smooth' });
-      return;
-    }
-
-    const cleanCaptain = captainName.trim();
-    const cleanTeam = teamName.trim();
-    const cleanPhone = phone.trim();
-    const cleanGameId = gameId.trim();
-
-    if (
-      cleanCaptain.length < 2 ||
-      cleanTeam.length < 2 ||
-      !cleanPhone ||
-      !cleanGameId
-    ) {
-      setRegistrationMsg('Saari details sahi tarah bharo.');
-      return;
-    }
-
-    if (!isRegistrationOpen(selectedTournament)) {
-      setRegistrationMsg(
-        'Yeh tournament abhi registration ke liye open nahi hai.'
-      );
-      return;
-    }
-
-    setRegistrationBusy(true);
-
-    try {
-      const sb = supabaseBrowser();
-
-      if (!sb) {
-        setRegistrationMsg('Supabase connection missing hai.');
-        return;
-      }
-
-      const { data: existing, error: checkError } = await sb
-        .from('registrations')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('tournament_id', selectedTournament.id)
-        .maybeSingle();
-
-      if (checkError) {
-        setRegistrationMsg(`Registration check error: ${checkError.message}`);
-        return;
-      }
-
-      if (existing) {
-        setRegistrationMsg('Tum is tournament mein pehle hi register ho.');
-        refreshRegistrations();
-        return;
-      }
-
-      const profilePayload: Record<string, unknown> = {
-        id: user.id,
-        game_name: getGameName(selectedTournament),
-        game_id: cleanGameId,
-      };
-
-      const metadataName = String(user.user_metadata?.player_name || '').trim();
-
-      if (metadataName || cleanCaptain) {
-        profilePayload.player_name = metadataName || cleanCaptain;
-      }
-
-      if (user.email) profilePayload.email = user.email;
-
-      const { error: profileError } = await sb
-        .from('players')
-        .upsert(profilePayload, { onConflict: 'id' });
-
-      if (profileError) {
-        setRegistrationMsg(
-          `Player profile save nahi hua: ${profileError.message}`
-        );
-        return;
-      }
-
-      const { error: registrationError } = await sb
-        .from('registrations')
-        .insert({
-          user_id: user.id,
-          tournament_id: selectedTournament.id,
-          team_name: cleanTeam,
-          captain_name: cleanCaptain,
-          phone: cleanPhone,
-        });
-
-      if (registrationError) {
-        if (
-          registrationError.code === '23505' ||
-          registrationError.message.toLowerCase().includes('duplicate')
-        ) {
-          setRegistrationMsg(
-            'Tum is tournament mein pehle hi register ho chuke ho.'
-          );
-          refreshRegistrations();
-        } else {
-          setRegistrationMsg(`Registration error: ${registrationError.message}`);
-        }
-        return;
-      }
-
-      setRegistrationSuccess(true);
-      setRegistrationMsg(
-        `Registration successful! ${selectedTournament.name} mein tumhara registration save ho gaya.`
-      );
-      setTeamName('');
-      setPhone('');
-      setGameId('');
-      refreshRegistrations();
-    } catch {
-      setRegistrationMsg(
-        'Registration complete nahi hui. Internet check karke dobara try karo.'
-      );
-    } finally {
-      setRegistrationBusy(false);
-    }
-  }
-
-  async function logout() {
-    const sb = supabaseBrowser();
-    if (!sb) return;
-
-    const { error } = await sb.auth.signOut();
+  const logout = async () => {
+    const { error } = await supabase.auth.signOut();
 
     if (error) {
-      setMsg(`Logout error: ${error.message}`);
+      setAuthError(error.message);
       return;
     }
 
     setUser(null);
-    setProfile(null);
-    setMyRegistrations([]);
-    setSelectedTournament(null);
-    setRegistrationMsg('');
-    setMsg('You have been signed out.');
-  }
+    setPlayer({});
+    setRegistrations([]);
+    setAuthMessage('You have been logged out.');
+    setAuthError('');
+  };
+
+  const startRegistration = (tournament: Tournament) => {
+    setRegisterMessage('');
+    setRegisterError('');
+
+    if (!user) {
+      setAuthMessage('');
+      setAuthError('Please sign in or create an account before registering.');
+      document.getElementById('account')?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+
+    if (!canRegister(tournament.status)) {
+      setRegisterError('Registration is not open for this tournament.');
+      return;
+    }
+
+    const alreadyRegistered = registrations.some(
+      (registration) => registration.tournament_id === tournament.id
+    );
+
+    if (alreadyRegistered) {
+      setRegisterError('You are already registered for this tournament.');
+      return;
+    }
+
+    setActiveTournament(tournament);
+    setRegisterError('');
+    setRegisterMessage('');
+    setGameId(player.game_id || '');
+
+    document
+      .getElementById('registration-form')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handleRegistration = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setRegisterLoading(true);
+    setRegisterError('');
+    setRegisterMessage('');
+
+    try {
+      if (!user) {
+        throw new Error('Please sign in before registering.');
+      }
+
+      if (!activeTournament) {
+        throw new Error('Please select a tournament first.');
+      }
+
+      if (!teamName.trim() || !captainName.trim() || !phone.trim() || !gameId.trim()) {
+        throw new Error('Please fill in all required fields.');
+      }
+
+      if (!canRegister(activeTournament.status)) {
+        throw new Error('Registration is closed for this tournament.');
+      }
+
+      const { data: existing, error: duplicateCheckError } = await supabase
+        .from('registrations')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('tournament_id', activeTournament.id)
+        .maybeSingle();
+
+      if (duplicateCheckError) throw duplicateCheckError;
+
+      if (existing) {
+        throw new Error('You are already registered for this tournament.');
+      }
+
+      const { error: playerError } = await supabase
+        .from('players')
+        .upsert(
+          {
+            id: user.id,
+            player_name: captainName.trim(),
+            email: user.email || '',
+            game_name: gameName(activeTournament),
+            game_id: gameId.trim(),
+          },
+          { onConflict: 'id' }
+        );
+
+      if (playerError) throw playerError;
+
+      const { error: registrationError } = await supabase
+        .from('registrations')
+        .insert({
+          user_id: user.id,
+          tournament_id: activeTournament.id,
+          team_name: teamName.trim(),
+          captain_name: captainName.trim(),
+          phone: phone.trim(),
+        });
+
+      if (registrationError) {
+        if (registrationError.code === '23505') {
+          throw new Error('You are already registered for this tournament.');
+        }
+
+        throw registrationError;
+      }
+
+      setPlayer({
+        ...player,
+        id: user.id,
+        player_name: captainName.trim(),
+        email: user.email || '',
+        game_name: gameName(activeTournament),
+        game_id: gameId.trim(),
+      });
+
+      setRegisterMessage('Registration submitted successfully!');
+      setTeamName('');
+      setPhone('');
+      setActiveTournament(null);
+
+      await refreshRegistrations(user.id);
+    } catch (error: any) {
+      setRegisterError(
+        error?.message || 'Could not complete registration. Please try again.'
+      );
+    } finally {
+      setRegisterLoading(false);
+    }
+  };
 
   return (
-    <>
-      <header className="site-header">
-        <div className="wrap nav">
-          <a className="logo" href="#home" aria-label="Hancy Arena home">
-            HANCY<span>ARENA</span>
-            <small>ESPORTS PLATFORM</small>
+    <main className="arena">
+      <header className="topbar">
+        <div className="container nav-inner">
+          <a href="#" className="brand" aria-label="Hancy Arena Home">
+            <span className="brand-mark">H</span>
+            <span>
+              HANCY <b>ARENA</b>
+              <small>ESPORTS TOURNAMENTS</small>
+            </span>
           </a>
 
-          <nav className="links" aria-label="Main navigation">
-            <a href="#home">Home</a>
+          <nav className="nav-links">
             <a href="#games">Games</a>
             <a href="#tournaments">Tournaments</a>
-            <a href="#my-registrations">My Matches</a>
-            <a href="#leaderboard">Leaderboard</a>
+            <a href="#my-registrations">My Registrations</a>
             <a href="/results">Results</a>
             <a href="/wallet">Wallet</a>
-            <a className="nav-account" href="#login">
-              {user ? 'My Account' : 'Sign In'}
-            </a>
           </nav>
+
+          <div className="nav-actions">
+            {user ? (
+              <>
+                <span className="user-pill">
+                  <span className="online-dot" />
+                  {player.player_name || user.email}
+                </span>
+                <button className="button button-small button-outline" onClick={logout}>
+                  Logout
+                </button>
+              </>
+            ) : (
+              <a className="button button-small" href="#account">
+                Sign In <span>↗</span>
+              </a>
+            )}
+          </div>
         </div>
       </header>
 
-      <main id="home">
-        <div className="wrap">
-          <section className="hero">
-            <div className="hero-copy">
-              <span className="badge">
-                <span className="live-dot" />
-                NEPAL GAMING COMMUNITY
+      <section className="hero">
+        <div className="container hero-layout">
+          <div className="hero-copy">
+            <div className="eyebrow">
+              <span className="pulse-dot" />
+              NEPAL'S GAMING ARENA
+            </div>
+
+            <h1>
+              PLAY TO
+              <br />
+              <span>COMPETE.</span>
+              <br />
+              RISE TO
+              <br />
+              <span className="outline-text">LEGEND.</span>
+            </h1>
+
+            <p className="hero-description">
+              Join tournaments, challenge the best players, and make your mark
+              in the Hancy Arena esports community.
+            </p>
+
+            <div className="hero-buttons">
+              <a href="#tournaments" className="button">
+                Explore Tournaments <span>→</span>
+              </a>
+              <a href="#games" className="button button-outline">
+                Explore Games
+              </a>
+            </div>
+
+            <div className="hero-note">
+              <span className="note-icon">✦</span>
+              YOUR GAME. YOUR SKILL. YOUR ARENA.
+            </div>
+          </div>
+
+          <div className="hero-visual">
+            <div className="visual-grid" />
+            <div className="visual-ring ring-one" />
+            <div className="visual-ring ring-two" />
+            <div className="hero-emblem">
+              <div className="emblem-top">HA</div>
+              <div className="emblem-sword">⚔</div>
+              <div className="emblem-bottom">HANCY ARENA</div>
+            </div>
+            <div className="floating-card card-top">
+              <span className="floating-icon">🏆</span>
+              <span>
+                <small>THE NEXT CHAMPION</small>
+                <b>COULD BE YOU</b>
               </span>
-
-              <h1>
-                YOUR GAME.
-                <br />
-                YOUR <span>ARENA.</span>
-              </h1>
-
-              <p>
-                Compete with your squad, join tournaments and make your mark
-                in Hancy Arena. Your next victory starts here.
-              </p>
-
-              <div className="hero-actions">
-                <a className="btn" href="#tournaments">
-                  Explore Tournaments <span>↗</span>
-                </a>
-                <a className="btn alt" href="#games">
-                  Choose Your Game
-                </a>
-              </div>
-
-              <div className="hero-trust">
-                <span>⚡ Competitive Gaming</span>
-                <span>🏆 Tournament Events</span>
-                <span>🇳🇵 NPR Support</span>
-              </div>
             </div>
-
-            <div className="hero-art">
-              <div className="hero-orbit orbit-one" />
-              <div className="hero-orbit orbit-two" />
-              <div className="hero-emblem">
-                <span className="emblem-crown">♛</span>
-                <span className="emblem-title">HANCY</span>
-                <span className="emblem-subtitle">ARENA</span>
-                <span className="emblem-line" />
-                <span className="emblem-caption">PLAY • COMPETE • WIN</span>
-              </div>
-              <div className="floating-tag tag-top">⚔️ BATTLE READY</div>
-              <div className="floating-tag tag-bottom">🏆 YOUR NEXT WIN</div>
+            <div className="floating-card card-bottom">
+              <span className="live-indicator" />
+              <span>
+                <small>TOURNAMENTS</small>
+                <b>{loadingTournaments ? 'Loading...' : `${openTournaments} Open`}</b>
+              </span>
             </div>
-          </section>
+            <div className="visual-label">EST. FOR CHAMPIONS</div>
+          </div>
+        </div>
+      </section>
 
-          <section className="stats-section" aria-label="Arena statistics">
-            <div className="stat">
-              <span className="stat-icon">🎮</span>
-              <div>
-                <strong>{games.length}</strong>
-                <span>Official Games</span>
-              </div>
+      <section className="stats-section">
+        <div className="container stats-grid">
+          <div className="stat-item">
+            <span className="stat-icon">🎮</span>
+            <div>
+              <strong>04</strong>
+              <small>FEATURED GAMES</small>
             </div>
-
-            <div className="stat">
-              <span className="stat-icon">🏆</span>
-              <div>
-                <strong>{tournaments.length}</strong>
-                <span>Tournaments Listed</span>
-              </div>
+          </div>
+          <div className="stat-item">
+            <span className="stat-icon">🏆</span>
+            <div>
+              <strong>{loadingTournaments ? '—' : tournaments.length}</strong>
+              <small>TOURNAMENTS</small>
             </div>
-
-            <div className="stat">
-              <span className="stat-icon">🇳🇵</span>
-              <div>
-                <strong>NPR</strong>
-                <span>Local Currency</span>
-              </div>
+          </div>
+          <div className="stat-item">
+            <span className="stat-icon">⚡</span>
+            <div>
+              <strong>{loadingTournaments ? '—' : openTournaments}</strong>
+              <small>OPEN TO JOIN</small>
             </div>
-
-            <div className="stat">
-              <span className="stat-icon">👤</span>
-              <div>
-                <strong>{user ? 'ONLINE' : 'JOIN US'}</strong>
-                <span>Player Account</span>
-              </div>
+          </div>
+          <div className="stat-item">
+            <span className="stat-icon">🇳🇵</span>
+            <div>
+              <strong>NPR</strong>
+              <small>LOCAL CURRENCY</small>
             </div>
-          </section>
+          </div>
+        </div>
+      </section>
 
-          <section className="section" id="games">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">FIND YOUR BATTLE</span>
-                <h2>Choose Your Game</h2>
-                <p className="muted">
-                  Select a game to explore its available tournaments.
-                </p>
-              </div>
-              <span className="heading-mark">01 / GAMES</span>
-            </div>
+      <section className="section container" id="games">
+        <div className="section-heading">
+          <div>
+            <span className="section-kicker">CHOOSE YOUR BATTLE</span>
+            <h2>Featured <span>Games</span></h2>
+            <p>Select your game and find a tournament that matches your skills.</p>
+          </div>
+          <button
+            className="text-button"
+            onClick={() => {
+              setSelectedGame('All Games');
+              setSearch('');
+              document.getElementById('tournaments')?.scrollIntoView({ behavior: 'smooth' });
+            }}
+          >
+            All tournaments <span>→</span>
+          </button>
+        </div>
 
-            <div className="game-grid">
-              <button
-                type="button"
-                className={`game-card all-card ${
-                  selectedGame === 'All Games' ? 'selected' : ''
-                }`}
-                onClick={() => setSelectedGame('All Games')}
-                aria-pressed={selectedGame === 'All Games'}
-              >
-                <span className="game-image all-image">🎮</span>
-                <span className="game-name">All Games</span>
-                <span className="game-description">Explore every game</span>
+        <div className="games-grid">
+          {games.map((game) => (
+            <button
+              type="button"
+              key={game.name}
+              className={`game-card ${selectedGame === game.name ? 'game-selected' : ''}`}
+              style={{ '--game-color': game.color } as React.CSSProperties}
+              onClick={() => {
+                setSelectedGame(selectedGame === game.name ? 'All Games' : game.name);
+                document.getElementById('tournaments')?.scrollIntoView({ behavior: 'smooth' });
+              }}
+            >
+              <div className="game-card-top">
+                <span className="game-icon">{game.icon}</span>
                 <span className="game-arrow">↗</span>
-              </button>
-
-              {games.map((game) => (
-                <button
-                  type="button"
-                  key={game.name}
-                  className={`game-card ${
-                    selectedGame === game.name ? 'selected' : ''
-                  }`}
-                  style={{ '--game-color': game.color } as React.CSSProperties}
-                  onClick={() => setSelectedGame(game.name)}
-                  aria-pressed={selectedGame === game.name}
-                >
-                  <span className="game-image">
-                    <img
-                      src={game.logo}
-                      alt={`${game.name} logo`}
-                      className="game-logo"
-                      loading="lazy"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none';
-                        const fallback =
-                          e.currentTarget.nextElementSibling as HTMLElement | null;
-                        if (fallback) fallback.style.display = 'grid';
-                      }}
-                    />
-                    <span className="logo-fallback">{game.icon}</span>
-                  </span>
-                  <span className="game-name">{game.name}</span>
-                  <span className="game-description">{game.description}</span>
-                  <span className="game-arrow">↗</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="section" id="tournaments">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">ENTER THE COMPETITION</span>
-                <h2>Featured Tournaments</h2>
-                <p className="muted">
-                  {selectedGame === 'All Games'
-                    ? 'Explore tournaments available in the arena.'
-                    : `Showing tournaments for ${selectedGame}.`}
-                </p>
               </div>
-              <span className="heading-mark">02 / EVENTS</span>
-            </div>
+              <div className="game-name">{game.name}</div>
+              <div className="game-description">{game.description}</div>
+              <div className="game-card-footer">
+                <span>{game.short}</span>
+                <span className="game-line" />
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
 
-            <div className="filter-row">
+      <section className="section tournaments-section" id="tournaments">
+        <div className="container">
+          <div className="section-heading">
+            <div>
+              <span className="section-kicker">ENTER THE ARENA</span>
+              <h2>Available <span>Tournaments</span></h2>
+              <p>Find your next match and compete for the top spot.</p>
+            </div>
+            <a href="/results" className="button button-outline">
+              View Results <span>↗</span>
+            </a>
+          </div>
+
+          <div className="tournament-tools">
+            <div className="filter-list">
               {['All Games', ...games.map((game) => game.name)].map((name) => (
                 <button
                   type="button"
                   key={name}
-                  className={`filter-chip ${selectedGame === name ? 'active' : ''}`}
+                  className={`filter-chip ${selectedGame === name ? 'filter-active' : ''}`}
                   onClick={() => setSelectedGame(name)}
                 >
+                  {name === 'All Games' ? '✦ ' : ''}
                   {name}
                 </button>
               ))}
             </div>
+            <input
+              className="search-input"
+              type="search"
+              placeholder="Search tournaments..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              aria-label="Search tournaments"
+            />
+          </div>
 
-            {loadingTournaments && (
-              <div className="empty-state">
-                <span className="loading-symbol">◌</span>
-                <h3>Loading tournaments...</h3>
-                <p>Please wait while we load arena events.</p>
-              </div>
-            )}
+          {loadingTournaments ? (
+            <div className="empty-state">
+              <div className="loading-spinner" />
+              <h3>Loading tournaments...</h3>
+              <p>Getting the latest tournaments from Hancy Arena.</p>
+            </div>
+          ) : filteredTournaments.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">🎮</div>
+              <h3>No tournaments found</h3>
+              <p>
+                {search || selectedGame !== 'All Games'
+                  ? 'Try changing your search or game filter.'
+                  : 'New tournaments will appear here when they are added.'}
+              </p>
+              <button
+                className="button button-outline"
+                onClick={() => {
+                  setSelectedGame('All Games');
+                  setSearch('');
+                }}
+              >
+                Clear filters
+              </button>
+            </div>
+          ) : (
+            <div className="tournament-grid">
+              {filteredTournaments.map((tournament) => {
+                const registered = registrations.some(
+                  (registration) => registration.tournament_id === tournament.id
+                );
+                const isOpen = canRegister(tournament.status);
 
-            {!loadingTournaments && filteredTournaments.length > 0 && (
-              <div className="tournament-grid">
-                {filteredTournaments.map((tournament) => {
-                  const gameName = getGameName(tournament);
-                  const game = games.find((item) => item.name === gameName);
-                  const open = isRegistrationOpen(tournament);
+                return (
+                  <article className="tournament-card" key={tournament.id}>
+                    <div className="tournament-banner">
+                      <div className="banner-pattern" />
+                      <span className="tournament-game-icon">
+                        {games.find((game) => game.name === gameName(tournament))?.icon || '🎮'}
+                      </span>
+                      <span className={`tournament-status ${isOpen ? 'status-open' : ''}`}>
+                        <span className="status-dot" />
+                        {statusLabel(tournament.status)}
+                      </span>
+                      <span className="banner-game-name">{gameName(tournament)}</span>
+                    </div>
 
-                  return (
-                    <article className="tournament-card" key={tournament.id}>
-                      <div className="tournament-card-top">
-                        <span
-                          className={`event-status ${open ? 'status-open' : 'status-other'}`}
-                        >
-                          <span className="status-dot" />
-                          {getStatusLabel(tournament.status)}
-                        </span>
-                        <span className="event-format">
-                          {tournament.format || 'Tournament'}
-                        </span>
+                    <div className="tournament-content">
+                      <div className="tournament-format">
+                        {tournament.format || 'TOURNAMENT'}
                       </div>
-
-                      <div className="event-game">
-                        <span
-                          className="event-game-icon"
-                          style={{ '--game-color': game?.color || '#00e5ff' } as React.CSSProperties}
-                        >
-                          {game?.icon || '🎮'}
-                        </span>
-                        <span>{gameName}</span>
-                      </div>
-
                       <h3>{tournament.name}</h3>
 
-                      <div className="event-details">
-                        <div className="event-detail">
-                          <span>ENTRY FEE</span>
-                          <strong>{formatMoney(getFee(tournament))}</strong>
+                      <div className="tournament-date">
+                        <span>◷</span> {dateLabel(tournament.start_at)}
+                      </div>
+
+                      <div className="tournament-prizes">
+                        <div>
+                          <small>ENTRY FEE</small>
+                          <strong>{money(fee(tournament))}</strong>
                         </div>
-                        <div className="event-detail prize-detail">
-                          <span>PRIZE POOL</span>
-                          <strong>{formatMoney(getPrize(tournament))}</strong>
+                        <div>
+                          <small>PRIZE POOL</small>
+                          <strong className="prize-value">{money(prize(tournament))}</strong>
                         </div>
                       </div>
 
-                      <div className="event-date">
-                        <span>◷</span>
-                        <span>{formatDate(tournament.start_at)}</span>
-                      </div>
+                      {registered ? (
+                        <button className="button button-full button-disabled" disabled>
+                          ✓ Already Registered
+                        </button>
+                      ) : (
+                        <button
+                          className={`button button-full ${!isOpen ? 'button-disabled' : ''}`}
+                          disabled={!isOpen}
+                          onClick={() => startRegistration(tournament)}
+                        >
+                          {isOpen ? 'Register Now' : statusLabel(tournament.status)}
+                          {isOpen && <span>→</span>}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
 
-                      <button
-                        type="button"
-                        className="btn event-button"
-                        disabled={!open}
-                        onClick={() => {
-                          setSelectedTournament(tournament);
-                          setRegistrationMsg('');
-                          setRegistrationSuccess(false);
-                          document
-                            .getElementById('register-form')
-                            ?.scrollIntoView({ behavior: 'smooth' });
-                        }}
-                      >
-                        {open ? 'Join Tournament →' : getStatusLabel(tournament.status)}
-                      </button>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
+      {registerError && (
+        <div className="container">
+          <div className="message message-error">{registerError}</div>
+        </div>
+      )}
 
-            {!loadingTournaments && filteredTournaments.length === 0 && (
-              <div className="empty-state">
-                <span className="empty-icon">🏆</span>
-                <h3>No tournaments available yet</h3>
-                <p>
-                  There are no tournaments listed for this selection right now.
-                  Please check back later.
-                </p>
-                {selectedGame !== 'All Games' && (
-                  <button
-                    type="button"
-                    className="btn alt"
-                    onClick={() => setSelectedGame('All Games')}
-                  >
-                    View All Games
-                  </button>
-                )}
-              </div>
-            )}
-          </section>
+      {registerMessage && (
+        <div className="container">
+          <div className="message message-success">{registerMessage}</div>
+        </div>
+      )}
 
-          <section className="section" id="my-registrations">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">YOUR COMPETITION HISTORY</span>
-                <h2>My Registrations</h2>
-                <p className="muted">
-                  Keep track of tournaments you have joined.
-                </p>
+      {activeTournament && user && (
+        <section className="section container" id="registration-form">
+          <div className="registration-layout">
+            <div className="registration-intro">
+              <span className="section-kicker">YOUR NEXT CHALLENGE</span>
+              <h2>Join the <span>Arena.</span></h2>
+              <p>
+                Complete your player details to register for the selected
+                tournament. Please check your game ID before submitting.
+              </p>
+              <div className="selected-tournament">
+                <span className="selected-icon">
+                  {games.find((game) => game.name === gameName(activeTournament))?.icon || '🎮'}
+                </span>
+                <div>
+                  <small>SELECTED TOURNAMENT</small>
+                  <strong>{activeTournament.name}</strong>
+                  <span>{gameName(activeTournament)} · {money(fee(activeTournament))} entry</span>
+                </div>
               </div>
-              <span className="heading-mark">03 / MY EVENTS</span>
             </div>
 
-            {!user && (
-              <div className="empty-state">
-                <span className="empty-icon">👤</span>
-                <h3>Sign in to view your registrations</h3>
-                <p>Your registered tournaments will appear here.</p>
-                <a className="btn" href="#login">Sign In →</a>
+            <form className="form-panel" onSubmit={handleRegistration}>
+              <div className="form-panel-heading">
+                <h3>Player Registration</h3>
+                <span>REQUIRED FIELDS *</span>
               </div>
-            )}
 
-            {user && loadingMyRegistrations && (
-              <div className="empty-state">
-                <span className="loading-symbol">◌</span>
-                <h3>Loading your registrations...</h3>
+              <label>
+                Team Name *
+                <input
+                  required
+                  value={teamName}
+                  onChange={(event) => setTeamName(event.target.value)}
+                  placeholder="Enter your team name"
+                  maxLength={80}
+                />
+              </label>
+
+              <label>
+                Captain / Player Name *
+                <input
+                  required
+                  value={captainName}
+                  onChange={(event) => setCaptainName(event.target.value)}
+                  placeholder="Enter your player name"
+                  maxLength={80}
+                />
+              </label>
+
+              <label>
+                Phone Number *
+                <input
+                  required
+                  type="tel"
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  placeholder="Enter your contact number"
+                  maxLength={30}
+                />
+              </label>
+
+              <label>
+                In-game ID / UID *
+                <input
+                  required
+                  value={gameId}
+                  onChange={(event) => setGameId(event.target.value)}
+                  placeholder="Enter your game ID"
+                  maxLength={100}
+                />
+              </label>
+
+              {registerError && <div className="message message-error">{registerError}</div>}
+
+              <button
+                className="button button-full"
+                type="submit"
+                disabled={registerLoading}
+              >
+                {registerLoading ? 'Submitting...' : 'Confirm Registration →'}
+              </button>
+
+              <button
+                className="cancel-button"
+                type="button"
+                onClick={() => {
+                  setActiveTournament(null);
+                  setRegisterError('');
+                }}
+              >
+                Cancel
+              </button>
+
+              <p className="form-footnote">
+                Registration is subject to tournament rules and admin review.
+              </p>
+            </form>
+          </div>
+        </section>
+      )}
+
+      <section className="section container" id="my-registrations">
+        <div className="section-heading">
+          <div>
+            <span className="section-kicker">YOUR PLAYER DASHBOARD</span>
+            <h2>My <span>Registrations</span></h2>
+            <p>Keep track of the tournaments you have joined.</p>
+          </div>
+          {user && (
+            <span className="registration-count">
+              {registrations.length} {registrations.length === 1 ? 'ENTRY' : 'ENTRIES'}
+            </span>
+          )}
+        </div>
+
+        {!user ? (
+          <div className="empty-state compact-empty">
+            <div className="empty-icon">👤</div>
+            <h3>Sign in to see your registrations</h3>
+            <p>Your registered tournaments will be listed here.</p>
+            <a href="#account" className="button">Sign In / Sign Up</a>
+          </div>
+        ) : loadingRegistrations ? (
+          <div className="empty-state compact-empty">
+            <div className="loading-spinner" />
+            <h3>Loading your registrations...</h3>
+          </div>
+        ) : registrations.length === 0 ? (
+          <div className="empty-state compact-empty">
+            <div className="empty-icon">🏆</div>
+            <h3>No registrations yet</h3>
+            <p>Choose a tournament above and register to start competing.</p>
+            <a href="#tournaments" className="button">Find a Tournament →</a>
+          </div>
+        ) : (
+          <div className="my-registration-list">
+            {registrations.map((registration) => (
+              <div className="my-registration-row" key={registration.id}>
+                <div className="my-registration-icon">
+                  {games.find(
+                    (game) => game.name === gameName(
+                      registration.tournament || { id: '', name: '' }
+                    )
+                  )?.icon || '🎮'}
+                </div>
+                <div className="my-registration-info">
+                  <strong>{registration.tournament?.name || 'Tournament'}</strong>
+                  <span>
+                    {registration.team_name || 'Team not specified'} ·{' '}
+                    {registration.captain_name || player.player_name || 'Player'}
+                  </span>
+                </div>
+                <div className="my-registration-meta">
+                  <small>STATUS</small>
+                  <span className="registration-badge">REGISTERED</span>
+                </div>
               </div>
-            )}
+            ))}
+          </div>
+        )}
+      </section>
 
-            {user && myRegistrationsError && (
-              <div className="empty-state">
-                <h3>Could not load registrations</h3>
-                <p>{myRegistrationsError}</p>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={refreshRegistrations}
-                >
-                  Try Again
+      <section className="account-section" id="account">
+        <div className="container account-layout">
+          <div className="account-copy">
+            <span className="section-kicker">READY TO PLAY?</span>
+            <h2>Your next victory <span>starts here.</span></h2>
+            <p>
+              Create your Hancy Arena account to join tournaments and track
+              your registrations in one place.
+            </p>
+
+            <div className="account-benefit">
+              <span>✓</span> One account for your tournament registrations
+            </div>
+            <div className="account-benefit">
+              <span>✓</span> Track the tournaments you have joined
+            </div>
+            <div className="account-benefit">
+              <span>✓</span> Access wallet and results pages
+            </div>
+          </div>
+
+          <div className="auth-panel">
+            {user ? (
+              <div className="signed-in-panel">
+                <div className="signed-in-icon">✓</div>
+                <span className="section-kicker">ACCOUNT CONNECTED</span>
+                <h3>Welcome to the Arena!</h3>
+                <p>You are signed in as</p>
+                <strong>{user.email}</strong>
+                {authMessage && <div className="message message-success">{authMessage}</div>}
+                <button className="button button-full" onClick={logout}>
+                  Sign Out
                 </button>
               </div>
-            )}
-
-            {user && !loadingMyRegistrations && !myRegistrationsError && (
+            ) : (
               <>
-                <div className="registration-count">
-                  <span className="count-number">{myRegistrations.length}</span>
-                  <span>tournament registration(s)</span>
+                <div className="auth-tabs">
+                  <button
+                    type="button"
+                    className={authMode === 'signin' ? 'auth-tab auth-tab-active' : 'auth-tab'}
+                    onClick={() => {
+                      setAuthMode('signin');
+                      setAuthMessage('');
+                      setAuthError('');
+                    }}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    className={authMode === 'signup' ? 'auth-tab auth-tab-active' : 'auth-tab'}
+                    onClick={() => {
+                      setAuthMode('signup');
+                      setAuthMessage('');
+                      setAuthError('');
+                    }}
+                  >
+                    Create Account
+                  </button>
                 </div>
 
-                {myRegistrations.length > 0 ? (
-                  <div className="tournament-grid">
-                    {myRegistrations.map((registration) => {
-                      const tournament = registration.tournament;
-
-                      return (
-                        <article className="tournament-card" key={registration.id}>
-                          <div className="tournament-card-top">
-                            <span className="event-status status-open">
-                              <span className="status-dot" />
-                              REGISTERED
-                            </span>
-                          </div>
-
-                          <h3>
-                            {tournament?.name || 'Tournament details unavailable'}
-                          </h3>
-
-                          <p className="muted">
-                            {tournament
-                              ? getGameName(tournament)
-                              : 'Game details unavailable'}
-                          </p>
-
-                          <div className="registration-info">
-                            <p><span>Team</span><strong>{registration.team_name}</strong></p>
-                            <p><span>Captain</span><strong>{registration.captain_name || 'Not provided'}</strong></p>
-                            {tournament && (
-                              <>
-                                <p><span>Entry Fee</span><strong>{formatMoney(getFee(tournament))}</strong></p>
-                                <p><span>Prize Pool</span><strong>{formatMoney(getPrize(tournament))}</strong></p>
-                                <p><span>Event Status</span><strong>{getStatusLabel(tournament.status)}</strong></p>
-                              </>
-                            )}
-                          </div>
-
-                          {tournament?.start_at && (
-                            <div className="event-date">
-                              <span>◷</span>
-                              <span>{formatDate(tournament.start_at)}</span>
-                            </div>
-                          )}
-                        </article>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="empty-state">
-                    <span className="empty-icon">🎮</span>
-                    <h3>You haven't joined a tournament yet</h3>
-                    <p>Find your game and register for an open event.</p>
-                    <a className="btn" href="#tournaments">Explore Tournaments →</a>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
-
-          {selectedTournament && (
-            <section className="section" id="register-form">
-              <div className="section-heading">
-                <div>
-                  <span className="eyebrow">LOCK IN YOUR SPOT</span>
-                  <h2>Tournament Registration</h2>
-                  <p className="muted">
-                    Complete your player details to submit your registration.
-                  </p>
-                </div>
-              </div>
-
-              <div className="registration-layout">
-                <div className="registration-summary">
-                  <span className="summary-icon">🏆</span>
-                  <span className="eyebrow">SELECTED EVENT</span>
-                  <h3>{selectedTournament.name}</h3>
-                  <p className="muted">{getGameName(selectedTournament)}</p>
-                  <div className="summary-price">
-                    <span>Entry Fee</span>
-                    <strong>{formatMoney(getFee(selectedTournament))}</strong>
-                  </div>
-                  <div className="summary-price">
-                    <span>Prize Pool</span>
-                    <strong>{formatMoney(getPrize(selectedTournament))}</strong>
-                  </div>
-                  <p className="summary-note">
-                    Registration is submitted to the website database. Entry-fee
-                    charging is not performed by this form.
+                <div className="auth-heading">
+                  <h3>{authMode === 'signin' ? 'Welcome Back' : 'Join Hancy Arena'}</h3>
+                  <p>
+                    {authMode === 'signin'
+                      ? 'Sign in to continue your journey.'
+                      : 'Create an account and enter the competition.'}
                   </p>
                 </div>
 
-                <div className="registration-form-panel">
-                  {!user && (
-                    <div className="msg err">
-                      Please sign in before submitting your registration.
-                      <a className="inline-link" href="#login"> Sign In</a>
-                    </div>
+                <form className="auth-form" onSubmit={handleAuth}>
+                  {authMode === 'signup' && (
+                    <label>
+                      Player Name
+                      <input
+                        name="player_name"
+                        required
+                        placeholder="Your gaming name"
+                        maxLength={80}
+                      />
+                    </label>
                   )}
 
-                  <form className="form" onSubmit={handleRegistration}>
-                    <label>
-                      Captain / Player Name
-                      <input
-                        type="text"
-                        placeholder="Enter your player name"
-                        value={captainName}
-                        onChange={(e) => setCaptainName(e.target.value)}
-                        minLength={2}
-                        maxLength={60}
-                        required
-                      />
-                    </label>
+                  <label>
+                    Email Address
+                    <input
+                      name="email"
+                      type="email"
+                      required
+                      placeholder="you@example.com"
+                      autoComplete="email"
+                    />
+                  </label>
 
-                    <label>
-                      In-game ID / UID
-                      <input
-                        type="text"
-                        placeholder="Enter your game UID"
-                        value={gameId}
-                        onChange={(e) => setGameId(e.target.value)}
-                        maxLength={100}
-                        required
-                      />
-                    </label>
+                  <label>
+                    Password
+                    <input
+                      name="password"
+                      type="password"
+                      required
+                      minLength={6}
+                      placeholder="At least 6 characters"
+                      autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
+                    />
+                  </label>
 
-                    <label>
-                      Team Name
-                      <input
-                        type="text"
-                        placeholder="Enter your team name"
-                        value={teamName}
-                        onChange={(e) => setTeamName(e.target.value)}
-                        minLength={2}
-                        maxLength={80}
-                        required
-                      />
-                    </label>
+                  {authError && <div className="message message-error">{authError}</div>}
+                  {authMessage && <div className="message message-success">{authMessage}</div>}
 
-                    <label>
-                      Phone Number
-                      <input
-                        type="tel"
-                        placeholder="Enter your phone number"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        maxLength={25}
-                        required
-                      />
-                    </label>
+                  <button className="button button-full" type="submit" disabled={authLoading || !authReady}>
+                    {authLoading
+                      ? 'Please wait...'
+                      : authMode === 'signin'
+                        ? 'Sign In →'
+                        : 'Create Account →'}
+                  </button>
+                </form>
 
-                    <button
-                      className="btn submit-button"
-                      disabled={registrationBusy || !user}
-                    >
-                      {registrationBusy ? 'Submitting...' : 'Submit Registration →'}
-                    </button>
-
-                    <button
-                      type="button"
-                      className="btn alt"
-                      onClick={() => {
-                        setSelectedTournament(null);
-                        setRegistrationMsg('');
-                        setRegistrationSuccess(false);
-                      }}
-                    >
-                      Cancel
-                    </button>
-
-                    {registrationMsg && (
-                      <div
-                        className={`msg ${!registrationSuccess ? 'err' : ''}`}
-                        role="status"
-                      >
-                        {registrationMsg}
-                      </div>
-                    )}
-                  </form>
-                </div>
-              </div>
-            </section>
-          )}
-
-          <section className="section" id="leaderboard">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">THE TOP COMPETITORS</span>
-                <h2>Arena Leaderboard</h2>
-                <p className="muted">
-                  Player rankings and match results will appear here when the
-                  results data is connected.
+                <p className="auth-terms">
+                  By continuing, you agree to follow Hancy Arena tournament rules.
                 </p>
-              </div>
-              <span className="heading-mark">04 / RANKINGS</span>
-            </div>
-
-            <div className="empty-state leaderboard-state">
-              <span className="empty-icon">🏆</span>
-              <h3>The leaderboard is getting ready</h3>
-              <p>
-                Rankings have not been connected to verified game result
-                columns yet. No demo rankings are shown as real player results.
-              </p>
-              <a className="btn alt" href="/results">View Results Page →</a>
-            </div>
-          </section>
-
-          <section className="section" id="login">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">PLAYER ACCESS</span>
-                <h2>{user ? 'Your Player Account' : 'Join the Arena'}</h2>
-                <p className="muted">
-                  {user
-                    ? 'Manage your account and access your player features.'
-                    : 'Create your account or sign in to join tournaments.'}
-                </p>
-              </div>
-              <span className="heading-mark">05 / ACCOUNT</span>
-            </div>
-
-            <div className="account-layout">
-              <div className="account-promo">
-                <span className="account-symbol">♛</span>
-                <span className="eyebrow">WELCOME TO HANCY ARENA</span>
-                <h3>Ready to compete?</h3>
-                <p>
-                  Sign in to manage your registrations and access your arena
-                  account.
-                </p>
-                <div className="account-perk">✓ Tournament registration</div>
-                <div className="account-perk">✓ Personal registration history</div>
-                <div className="account-perk">✓ Wallet page access</div>
-              </div>
-
-              <div className="account-panel">
-                {user ? (
-                  <div className="form">
-                    <span className="account-avatar">👤</span>
-                    <span className="eyebrow">SIGNED IN</span>
-                    <h3>
-                      {profile?.player_name ||
-                        user.user_metadata?.player_name ||
-                        'Player'}
-                    </h3>
-                    <p className="muted">{user.email || 'Email unavailable'}</p>
-                    <div className="account-detail">
-                      <span>Profile</span>
-                      <strong>{profile ? 'Loaded' : 'Not available'}</strong>
-                    </div>
-                    <a className="btn" href="/wallet">💳 Open My Wallet</a>
-                    <button type="button" className="btn alt" onClick={logout}>
-                      Sign Out
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="auth-tabs">
-                      <button
-                        type="button"
-                        className={authMode === 'signin' ? 'auth-tab active' : 'auth-tab'}
-                        onClick={() => {
-                          setAuthMode('signin');
-                          setMsg('');
-                        }}
-                      >
-                        Sign In
-                      </button>
-                      <button
-                        type="button"
-                        className={authMode === 'signup' ? 'auth-tab active' : 'auth-tab'}
-                        onClick={() => {
-                          setAuthMode('signup');
-                          setMsg('');
-                        }}
-                      >
-                        Create Account
-                      </button>
-                    </div>
-
-                    <h3>{authMode === 'signup' ? 'Create your account' : 'Welcome back'}</h3>
-                    <p className="muted">
-                      {authMode === 'signup'
-                        ? 'Enter your details to join the arena.'
-                        : 'Sign in with your registered email.'}
-                    </p>
-
-                    <form className="form" onSubmit={handleAuth}>
-                      {authMode === 'signup' && (
-                        <label>
-                          Player Name
-                          <input
-                            type="text"
-                            placeholder="Enter your player name"
-                            value={playerName}
-                            onChange={(e) => setPlayerName(e.target.value)}
-                            minLength={2}
-                            maxLength={40}
-                            required
-                          />
-                        </label>
-                      )}
-
-                      <label>
-                        Email Address
-                        <input
-                          type="email"
-                          placeholder="you@example.com"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          required
-                        />
-                      </label>
-
-                      <label>
-                        Password
-                        <input
-                          type="password"
-                          placeholder="Minimum 6 characters"
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          minLength={6}
-                          required
-                        />
-                      </label>
-
-                      <button className="btn submit-button" disabled={busy}>
-                        {busy
-                          ? 'Please wait...'
-                          : authMode === 'signup'
-                            ? 'Create Account →'
-                            : 'Sign In →'}
-                      </button>
-                    </form>
-                  </>
-                )}
-
-                {msg && (
-                  <div
-                    className={`msg ${
-                      /error|missing|failed/i.test(msg) ? 'err' : ''
-                    }`}
-                    role="status"
-                  >
-                    {msg}
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
+              </>
+            )}
+          </div>
         </div>
-      </main>
+      </section>
 
-      <footer className="site-footer">
-        <div className="wrap footer-inner">
-          <a className="logo" href="#home">
-            HANCY<span>ARENA</span>
+      <section className="cta-strip">
+        <div className="container cta-content">
+          <div>
+            <span className="section-kicker">THE ARENA IS WAITING</span>
+            <h2>Make your next match count.</h2>
+          </div>
+          <a href="#tournaments" className="button">
+            Find Your Tournament <span>→</span>
           </a>
-          <p>Play fair. Compete hard. Make your mark.</p>
+        </div>
+      </section>
+
+      <footer className="footer">
+        <div className="container footer-main">
+          <a href="#" className="brand">
+            <span className="brand-mark">H</span>
+            <span>
+              HANCY <b>ARENA</b>
+              <small>ESPORTS TOURNAMENTS</small>
+            </span>
+          </a>
+
+          <p>Built for players. Driven by competition.</p>
+
           <div className="footer-links">
             <a href="#games">Games</a>
             <a href="#tournaments">Tournaments</a>
             <a href="/results">Results</a>
             <a href="/wallet">Wallet</a>
+            <a href="/admin">Admin</a>
           </div>
-          <small>© 2026 Hancy Arena. All rights reserved.</small>
+        </div>
+        <div className="container footer-bottom">
+          <span>© {new Date().getFullYear()} Hancy Arena. All rights reserved.</span>
+          <span>PLAY FAIR · PLAY TO WIN</span>
         </div>
       </footer>
 
       <style jsx>{`
-        .site-header {
-          position: relative;
-          z-index: 10;
-          border-bottom: 1px solid #202b3e;
-          background: rgba(7, 10, 18, 0.93);
+        :global(html) {
+          scroll-behavior: smooth;
+          scroll-padding-top: 85px;
         }
 
-        .nav {
-          min-height: 82px;
+        :global(body) {
+          margin: 0;
+          background: #070910;
+          color: #f7f8ff;
+          font-family: Arial, Helvetica, sans-serif;
         }
 
-        .logo {
+        :global(*) {
+          box-sizing: border-box;
+        }
+
+        :global(a) {
+          color: inherit;
+          text-decoration: none;
+        }
+
+        :global(button),
+        :global(input) {
+          font: inherit;
+        }
+
+        .arena {
+          --bg: #070910;
+          --panel: #10131f;
+          --border: #272b3d;
+          --muted: #969bb1;
+          --cyan: #00e5ff;
+          --purple: #8b5cf6;
+          overflow: hidden;
+          background:
+            radial-gradient(ellipse at 15% 0%, #171331 0%, transparent 35%),
+            var(--bg);
+          color: #f7f8ff;
+          min-height: 100vh;
+        }
+
+        .container {
+          width: min(1160px, calc(100% - 40px));
+          margin: 0 auto;
+        }
+
+        .topbar {
+          height: 76px;
+          position: sticky;
+          top: 0;
+          z-index: 50;
+          background: rgba(7, 9, 16, 0.94);
+          backdrop-filter: blur(16px);
+          border-bottom: 1px solid #25283a;
+        }
+
+        .nav-inner {
+          height: 100%;
           display: flex;
-          flex-direction: column;
-          gap: 3px;
-          font-size: 23px;
-          letter-spacing: 0.4px;
+          align-items: center;
+          justify-content: space-between;
+          gap: 22px;
         }
 
-        .logo span {
-          color: #00e5ff;
+        .brand {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          flex-shrink: 0;
+          font-size: 17px;
+          font-weight: 900;
+          letter-spacing: 1.1px;
+          line-height: 1.1;
         }
 
-        .logo small {
-          color: #7d8ca8;
-          font-size: 9px;
-          letter-spacing: 2.5px;
+        .brand b {
+          color: var(--cyan);
         }
 
-        .links {
-          justify-content: flex-end;
+        .brand small {
+          display: block;
+          margin-top: 5px;
+          font-size: 8px;
+          letter-spacing: 2px;
+          color: #8c92a9;
+          font-weight: 700;
         }
 
-        .nav-account {
-          padding: 10px 14px;
-          border: 1px solid #285467;
+        .brand-mark {
+          display: grid;
+          place-items: center;
+          width: 42px;
+          height: 42px;
+          border: 1px solid var(--cyan);
+          border-radius: 11px;
+          background: linear-gradient(135deg, #142d3b, #17132d);
+          color: var(--cyan);
+          font-size: 26px;
+          box-shadow: 0 0 24px #00e5ff1a;
+        }
+
+        .nav-links,
+        .nav-actions {
+          display: flex;
+          align-items: center;
+          gap: 19px;
+        }
+
+        .nav-links {
+          color: #b4b8ca;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .nav-links a,
+        .footer-links a {
+          transition: color 0.2s ease;
+        }
+
+        .nav-links a:hover,
+        .footer-links a:hover {
+          color: var(--cyan);
+        }
+
+        .nav-actions {
+          gap: 10px;
+        }
+
+        .user-pill {
+          max-width: 150px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: #c6c9d8;
+          font-size: 11px;
+        }
+
+        .online-dot,
+        .pulse-dot,
+        .live-indicator {
+          display: inline-block;
+          width: 7px;
+          height: 7px;
+          margin-right: 5px;
+          border-radius: 50%;
+          background: #45f6a2;
+          box-shadow: 0 0 10px #45f6a2;
+        }
+
+        .button {
+          min-height: 46px;
+          display: inline-flex;
+          justify-content: center;
+          align-items: center;
+          gap: 12px;
+          padding: 0 19px;
+          border: 1px solid var(--cyan);
           border-radius: 9px;
-          color: #00e5ff;
-          background: #071a22;
+          background: var(--cyan);
+          color: #041016;
+          font-weight: 900;
+          font-size: 12px;
+          cursor: pointer;
+          transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+
+        .button:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 24px #00e5ff25;
+        }
+
+        .button:disabled {
+          cursor: not-allowed;
+          opacity: 0.5;
+        }
+
+        .button-small {
+          min-height: 37px;
+          padding: 0 13px;
+          font-size: 11px;
+        }
+
+        .button-outline {
+          border-color: #3a4055;
+          background: #111421;
+          color: #fff;
+        }
+
+        .button-outline:hover:not(:disabled) {
+          border-color: var(--cyan);
+          color: var(--cyan);
+        }
+
+        .button-full {
+          width: 100%;
+        }
+
+        .button-disabled {
+          border-color: #33374a;
+          background: #202333;
+          color: #9297aa;
         }
 
         .hero {
           position: relative;
-          grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
-          min-height: 465px;
-          padding: 66px 0 48px;
-          gap: 25px;
+          padding: 64px 0 72px;
+          border-bottom: 1px solid #202337;
+          background:
+            radial-gradient(ellipse at 76% 46%, #39206c50, transparent 35%),
+            linear-gradient(120deg, #090b14, #0b0d19 55%, #100d20);
+        }
+
+        .hero-layout {
+          display: grid;
+          grid-template-columns: 1fr 0.9fr;
+          gap: 50px;
+          align-items: center;
         }
 
         .hero-copy {
@@ -1362,1036 +1420,1423 @@ export default function Home() {
           z-index: 2;
         }
 
-        .live-dot,
-        .status-dot {
-          display: inline-block;
-          width: 7px;
-          height: 7px;
-          flex-shrink: 0;
-          border-radius: 50%;
-          background: #00e5ff;
-          box-shadow: 0 0 10px #00e5ff;
+        .eyebrow,
+        .section-kicker {
+          color: var(--cyan);
+          font-size: 10px;
+          letter-spacing: 2.5px;
+          font-weight: 900;
+        }
+
+        .eyebrow {
+          display: inline-flex;
+          align-items: center;
+          padding: 10px 13px;
+          border: 1px solid #23414f;
+          border-radius: 99px;
+          background: #0c1c26;
         }
 
         .hero h1 {
-          margin: 22px 0 18px;
-          font-size: clamp(44px, 5.6vw, 72px);
-          line-height: 0.99;
-          letter-spacing: -2.8px;
+          margin: 24px 0 18px;
+          font-size: clamp(50px, 6.4vw, 79px);
+          font-weight: 1000;
+          letter-spacing: -4px;
+          line-height: 0.96;
         }
 
         .hero h1 span {
-          color: #00e5ff;
-          text-shadow: 0 0 35px #00e5ff28;
+          color: var(--cyan);
+          text-shadow: 0 0 30px #00e5ff25;
         }
 
-        .hero-copy > p {
-          max-width: 560px;
-          margin-bottom: 25px;
-          font-size: 16px;
+        .hero h1 .outline-text {
+          color: transparent;
+          -webkit-text-stroke: 1.5px #8b5cf6;
+          text-shadow: none;
         }
 
-        .hero-actions {
+        .hero-description {
+          max-width: 450px;
+          margin: 23px 0 26px;
+          color: #a1a6bb;
+          font-size: 14px;
+          line-height: 1.9;
+        }
+
+        .hero-buttons {
           display: flex;
           flex-wrap: wrap;
-          gap: 10px;
+          gap: 11px;
         }
 
-        .hero-actions .btn.alt {
-          margin-left: 0;
-        }
-
-        .hero-trust {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 15px;
-          margin-top: 27px;
-          color: #8d9ab3;
-          font-size: 11px;
-        }
-
-        .hero-art {
-          position: relative;
-          display: grid;
-          place-items: center;
-          min-height: 330px;
-          overflow: hidden;
-          border: 1px solid #25324a;
-          border-radius: 26px;
-          background:
-            radial-gradient(circle at 50% 45%, #163a50 0%, #10192d 35%, #0b101b 75%);
-        }
-
-        .hero-art::before {
-          position: absolute;
-          inset: 0;
-          background-image: linear-gradient(#ffffff06 1px, transparent 1px),
-            linear-gradient(90deg, #ffffff06 1px, transparent 1px);
-          background-size: 28px 28px;
-          content: '';
-          mask-image: linear-gradient(transparent, black, transparent);
-        }
-
-        .hero-orbit {
-          position: absolute;
-          width: 250px;
-          height: 250px;
-          border: 1px solid #00e5ff28;
-          border-radius: 50%;
-        }
-
-        .orbit-two {
-          width: 310px;
-          height: 310px;
-          border-color: #657cff24;
-        }
-
-        .hero-emblem {
-          position: relative;
-          z-index: 1;
+        .hero-note {
           display: flex;
           align-items: center;
-          flex-direction: column;
-          justify-content: center;
-          width: 210px;
-          height: 235px;
-          border: 1px solid #00e5ff8a;
-          border-radius: 48% 48% 28% 28%;
-          background: linear-gradient(145deg, #172a40, #080d17 75%);
-          box-shadow: 0 0 50px #00e5ff12, inset 0 0 35px #00e5ff0b;
-          clip-path: polygon(50% 0%, 90% 12%, 100% 48%, 85% 83%, 50% 100%, 15% 83%, 0% 48%, 10% 12%);
-        }
-
-        .emblem-crown {
-          color: #00e5ff;
-          font-size: 44px;
-          line-height: 1;
-        }
-
-        .emblem-title {
-          margin-top: 9px;
-          font-size: 27px;
+          gap: 7px;
+          margin-top: 30px;
+          color: #6f748b;
+          font-size: 9px;
           font-weight: 900;
           letter-spacing: 2px;
         }
 
-        .emblem-subtitle {
-          color: #00e5ff;
-          font-size: 15px;
-          font-weight: 900;
-          letter-spacing: 6px;
+        .note-icon {
+          color: #a98aff;
+          font-size: 17px;
         }
 
-        .emblem-line {
-          width: 95px;
-          height: 1px;
-          margin: 12px 0 8px;
-          background: #00e5ff;
-        }
-
-        .emblem-caption {
-          color: #9eacc5;
-          font-size: 8px;
-          letter-spacing: 1px;
-        }
-
-        .floating-tag {
-          position: absolute;
-          z-index: 2;
-          padding: 10px 12px;
-          border: 1px solid #33445e;
-          border-radius: 10px;
-          background: #101a2aeb;
-          color: #e6f4ff;
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 0.6px;
-        }
-
-        .tag-top {
-          top: 14%;
-          right: 5%;
-        }
-
-        .tag-bottom {
-          bottom: 13%;
-          left: 5%;
-        }
-
-        .stats-section {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 12px;
-          padding: 0 0 26px;
-        }
-
-        .stat {
-          display: flex;
-          align-items: center;
-          gap: 13px;
-          min-width: 0;
-          padding: 17px;
-          border: 1px solid #253047;
-          border-radius: 14px;
-          background: linear-gradient(145deg, #111a29, #0c111c);
-        }
-
-        .stat-icon {
+        .hero-visual {
+          min-height: 420px;
+          position: relative;
           display: grid;
           place-items: center;
-          width: 43px;
-          height: 43px;
-          flex-shrink: 0;
-          border: 1px solid #2b425a;
+          isolation: isolate;
+        }
+
+        .visual-grid {
+          position: absolute;
+          inset: 0;
+          opacity: 0.25;
+          background-image:
+            linear-gradient(#5d4e9a30 1px, transparent 1px),
+            linear-gradient(90deg, #5d4e9a30 1px, transparent 1px);
+          background-size: 28px 28px;
+          mask-image: radial-gradient(ellipse, black 10%, transparent 75%);
+        }
+
+        .visual-ring {
+          position: absolute;
+          width: 320px;
+          height: 320px;
+          border: 1px solid #8b5cf633;
+          border-radius: 50%;
+          transform: rotate(-25deg) scaleX(0.78);
+        }
+
+        .ring-two {
+          width: 390px;
+          height: 390px;
+          border-color: #00e5ff1c;
+          transform: rotate(30deg) scaleX(0.8);
+        }
+
+        .hero-emblem {
+          width: 225px;
+          height: 270px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          clip-path: polygon(50% 0, 92% 15%, 88% 66%, 50% 100%, 12% 66%, 8% 15%);
+          background: linear-gradient(145deg, #00e5ff, #31245f 40%, #171127 70%, #8b5cf6);
+          filter: drop-shadow(0 0 30px #8b5cf633);
+        }
+
+        .emblem-top {
+          font-size: 63px;
+          line-height: 1;
+          font-weight: 1000;
+          letter-spacing: -6px;
+          text-shadow: 3px 4px #15112a;
+        }
+
+        .emblem-sword {
+          margin-top: 4px;
+          color: var(--cyan);
+          font-size: 54px;
+          text-shadow: 0 0 25px #00e5ff;
+        }
+
+        .emblem-bottom {
+          margin-top: 10px;
+          font-size: 10px;
+          font-weight: 1000;
+          letter-spacing: 2px;
+        }
+
+        .floating-card {
+          position: absolute;
+          z-index: 3;
+          display: flex;
+          align-items: center;
+          gap: 11px;
+          padding: 14px;
+          border: 1px solid #34344c;
           border-radius: 12px;
-          background: #102235;
-          font-size: 20px;
+          background: #101321eF;
+          box-shadow: 0 16px 40px #0005;
         }
 
-        .stat strong {
+        .card-top {
+          top: 50px;
+          right: -5px;
+        }
+
+        .card-bottom {
+          bottom: 45px;
+          left: 0;
+        }
+
+        .floating-icon {
+          font-size: 25px;
+        }
+
+        .floating-card small,
+        .floating-card b {
           display: block;
-          margin-bottom: 5px;
-          color: #f5f9ff;
-          font-size: 21px;
-          overflow-wrap: anywhere;
         }
 
-        .stat span:last-child {
-          color: #8593ad;
+        .floating-card small {
+          margin-bottom: 6px;
+          color: #858aa2;
+          font-size: 8px;
+          letter-spacing: 1.2px;
+        }
+
+        .floating-card b {
           font-size: 11px;
         }
 
+        .visual-label {
+          position: absolute;
+          right: 0;
+          bottom: 0;
+          color: #6d6b8e;
+          font-size: 8px;
+          letter-spacing: 3px;
+        }
+
+        .stats-section {
+          border-bottom: 1px solid #24273a;
+          background: #0c0e18;
+        }
+
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+        }
+
+        .stat-item {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 24px 18px;
+          border-right: 1px solid #24273a;
+        }
+
+        .stat-item:first-child {
+          border-left: 1px solid #24273a;
+        }
+
+        .stat-icon {
+          font-size: 25px;
+        }
+
+        .stat-item strong,
+        .stat-item small {
+          display: block;
+        }
+
+        .stat-item strong {
+          font-size: 23px;
+          color: #f4f5ff;
+        }
+
+        .stat-item small {
+          margin-top: 5px;
+          color: #858aa1;
+          font-size: 8px;
+          font-weight: 800;
+          letter-spacing: 1.5px;
+        }
+
         .section {
-          padding: 36px 0 43px;
-          scroll-margin-top: 22px;
+          padding-top: 75px;
+          padding-bottom: 75px;
         }
 
         .section-heading {
           display: flex;
           align-items: flex-end;
           justify-content: space-between;
-          gap: 16px;
-          margin-bottom: 23px;
+          gap: 22px;
+          margin-bottom: 30px;
         }
 
-        .section-heading h2 {
-          margin: 8px 0;
-          font-size: clamp(25px, 3vw, 34px);
-          letter-spacing: -0.8px;
+        .section-heading h2,
+        .registration-intro h2,
+        .account-copy h2 {
+          margin: 12px 0;
+          font-size: clamp(29px, 4vw, 39px);
+          letter-spacing: -1.5px;
+          line-height: 1.12;
         }
 
-        .section-heading p {
+        .section-heading h2 span,
+        .registration-intro h2 span,
+        .account-copy h2 span {
+          color: var(--cyan);
+        }
+
+        .section-heading p,
+        .registration-intro > p,
+        .account-copy > p {
           margin: 0;
-          font-size: 13px;
+          color: var(--muted);
+          font-size: 12px;
+          line-height: 1.8;
         }
 
-        .eyebrow {
-          color: #00cfe8;
-          font-size: 10px;
+        .text-button {
+          padding: 10px 0;
+          border: 0;
+          background: transparent;
+          color: var(--cyan);
+          font-size: 11px;
           font-weight: 900;
-          letter-spacing: 2px;
+          cursor: pointer;
+          white-space: nowrap;
         }
 
-        .heading-mark {
-          flex-shrink: 0;
-          padding-bottom: 5px;
-          color: #5d6a83;
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 1.5px;
+        .text-button span {
+          margin-left: 6px;
         }
 
-        .game-grid {
+        .games-grid {
           display: grid;
-          grid-template-columns: repeat(5, minmax(0, 1fr));
-          gap: 13px;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 16px;
         }
 
         .game-card {
-          --game-color: #00e5ff;
-          position: relative;
-          display: flex;
           min-width: 0;
-          min-height: 185px;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 10px;
-          padding: 17px 10px;
+          position: relative;
           overflow: hidden;
-          border: 1px solid #273249;
-          border-radius: 15px;
-          background: linear-gradient(145deg, #141d2c, #0b101a);
-          color: #fff;
-          text-align: center;
-          transition: transform 0.2s ease, border-color 0.2s ease,
-            background 0.2s ease;
+          padding: 20px;
+          border: 1px solid #292d41;
+          border-radius: 14px;
+          background: linear-gradient(150deg, #151827, #0d101a);
+          color: #f6f7ff;
+          text-align: left;
+          cursor: pointer;
+          transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
         }
 
         .game-card::after {
-          position: absolute;
-          right: 0;
-          bottom: 0;
-          left: 0;
-          height: 2px;
-          background: var(--game-color);
-          opacity: 0;
           content: '';
+          position: absolute;
+          right: -35px;
+          bottom: -45px;
+          width: 130px;
+          height: 130px;
+          border-radius: 50%;
+          background: var(--game-color);
+          opacity: 0.07;
+          filter: blur(25px);
         }
 
         .game-card:hover,
-        .game-card.selected {
-          transform: translateY(-3px);
+        .game-selected {
+          transform: translateY(-4px);
           border-color: var(--game-color);
-          background: linear-gradient(145deg, #1a2639, #0d1422);
+          background: linear-gradient(150deg, #1b2032, #0d101a);
         }
 
-        .game-card.selected::after {
-          opacity: 1;
+        .game-card-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 24px;
         }
 
-        .game-image {
-          position: relative;
+        .game-icon {
           display: grid;
           place-items: center;
-          width: 76px;
-          height: 76px;
-          flex-shrink: 0;
-          overflow: hidden;
-          border: 1px solid var(--game-color);
-          border-radius: 18px;
-          background: #f8f9fc;
-          box-shadow: 0 0 20px #0003;
-        }
-
-        .game-logo {
-          display: block;
-          width: 100%;
-          height: 100%;
-          padding: 3px;
-          object-fit: contain;
-        }
-
-        .logo-fallback {
-          position: absolute;
-          inset: 0;
-          display: none;
-          place-items: center;
-          background: #121b2b;
-          font-size: 34px;
-        }
-
-        .all-card {
-          --game-color: #00e5ff;
-        }
-
-        .all-image {
-          background: #12273a;
-          font-size: 34px;
-        }
-
-        .game-name {
-          font-size: 13px;
-          font-weight: 800;
-        }
-
-        .game-description {
-          color: #8c9ab2;
-          font-size: 11px;
+          width: 53px;
+          height: 53px;
+          border: 1px solid color-mix(in srgb, var(--game-color), transparent 60%);
+          border-radius: 13px;
+          background: color-mix(in srgb, var(--game-color), transparent 88%);
+          font-size: 27px;
         }
 
         .game-arrow {
-          position: absolute;
-          top: 10px;
-          right: 12px;
-          color: var(--game-color);
-          opacity: 0;
+          color: #7f849a;
+          font-size: 18px;
         }
 
-        .game-card.selected .game-arrow,
-        .game-card:hover .game-arrow {
-          opacity: 1;
+        .game-name {
+          position: relative;
+          z-index: 1;
+          font-size: 16px;
+          font-weight: 900;
         }
 
-        .filter-row {
+        .game-description {
+          margin-top: 7px;
+          color: #9095aa;
+          font-size: 11px;
+        }
+
+        .game-card-footer {
           display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-top: 25px;
+          color: var(--game-color);
+          font-size: 9px;
+          font-weight: 900;
+          letter-spacing: 1.6px;
+        }
+
+        .game-line {
+          height: 1px;
+          flex: 1;
+          background: var(--game-color);
+          opacity: 0.5;
+        }
+
+        .tournaments-section {
+          background:
+            radial-gradient(ellipse at 100% 0%, #1a1233 0%, transparent 35%),
+            #0b0d16;
+          border-top: 1px solid #202337;
+          border-bottom: 1px solid #202337;
+        }
+
+        .tournament-tools {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 16px;
+          margin-bottom: 24px;
+        }
+
+        .filter-list {
+          display: flex;
+          flex-wrap: wrap;
           gap: 8px;
-          margin: 0 0 20px;
-          padding-bottom: 4px;
-          overflow-x: auto;
-          scrollbar-width: thin;
         }
 
         .filter-chip {
-          flex-shrink: 0;
-          padding: 9px 13px;
-          border: 1px solid #29364b;
-          border-radius: 999px;
-          background: #0e1522;
-          color: #aab7cc;
-          font-size: 11px;
-          font-weight: 700;
+          padding: 10px 12px;
+          border: 1px solid #303448;
+          border-radius: 8px;
+          background: #101320;
+          color: #a8adc0;
+          font-size: 10px;
+          font-weight: 800;
+          cursor: pointer;
         }
 
-        .filter-chip.active {
-          border-color: #00bcd4;
-          background: #0a2631;
-          color: #00e5ff;
+        .filter-active {
+          border-color: var(--cyan);
+          background: #0c2630;
+          color: var(--cyan);
+        }
+
+        .search-input {
+          width: 220px;
+          min-width: 150px;
+          padding: 12px 13px;
+          border: 1px solid #303448;
+          border-radius: 8px;
+          outline: none;
+          background: #101320;
+          color: #fff;
+          font-size: 11px;
+        }
+
+        .search-input:focus,
+        .arena input:focus {
+          border-color: var(--cyan);
+          box-shadow: 0 0 0 3px #00e5ff12;
         }
 
         .tournament-grid {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 15px;
+          gap: 18px;
         }
 
         .tournament-card {
-          display: flex;
           min-width: 0;
-          flex-direction: column;
-          padding: 19px;
-          border: 1px solid #28354a;
-          border-radius: 16px;
-          background: linear-gradient(145deg, #121b2a, #0b101a);
-          transition: border-color 0.2s ease, transform 0.2s ease;
+          overflow: hidden;
+          border: 1px solid #2a2e42;
+          border-radius: 13px;
+          background: #111420;
+          transition: transform 0.2s ease, border-color 0.2s ease;
         }
 
         .tournament-card:hover {
-          transform: translateY(-2px);
-          border-color: #3a5d79;
+          transform: translateY(-3px);
+          border-color: #505371;
         }
 
-        .tournament-card-top {
+        .tournament-banner {
+          position: relative;
+          min-height: 145px;
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          flex-wrap: wrap;
-          gap: 8px;
+          justify-content: center;
+          overflow: hidden;
+          background:
+            radial-gradient(circle at 50% 0%, #5b37a966, transparent 65%),
+            linear-gradient(135deg, #191b32, #111321);
         }
 
-        .event-status {
+        .banner-pattern {
+          position: absolute;
+          inset: 0;
+          opacity: 0.23;
+          background-image: linear-gradient(135deg, transparent 45%, #8b5cf6 45%, transparent 46%);
+          background-size: 22px 22px;
+        }
+
+        .tournament-game-icon {
+          position: relative;
+          z-index: 1;
+          font-size: 54px;
+          filter: drop-shadow(0 5px 20px #0008);
+        }
+
+        .tournament-status {
+          position: absolute;
+          top: 12px;
+          right: 12px;
+          z-index: 2;
           display: inline-flex;
           align-items: center;
-          gap: 7px;
+          gap: 5px;
+          max-width: 70%;
           padding: 7px 9px;
-          border-radius: 7px;
-          font-size: 9px;
+          border: 1px solid #424359;
+          border-radius: 6px;
+          background: #151725eF;
+          color: #b0b3c4;
+          font-size: 8px;
           font-weight: 900;
           letter-spacing: 0.5px;
         }
 
         .status-open {
-          background: #113126;
-          color: #70e8a4;
+          border-color: #1c614b;
+          background: #0c2c23eF;
+          color: #6df0b5;
         }
 
-        .status-open .status-dot {
-          background: #61e294;
-          box-shadow: 0 0 8px #61e294;
-        }
-
-        .status-other {
-          background: #292438;
-          color: #d0b6ff;
-        }
-
-        .status-other .status-dot {
-          background: #bb9bff;
-          box-shadow: none;
-        }
-
-        .event-format {
-          color: #8492aa;
-          font-size: 10px;
-        }
-
-        .event-game {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          margin-top: 20px;
-          color: #9eabc1;
-          font-size: 12px;
-        }
-
-        .event-game-icon {
-          display: grid;
-          place-items: center;
-          width: 38px;
-          height: 38px;
+        .status-dot {
+          width: 5px;
+          height: 5px;
           flex-shrink: 0;
-          border: 1px solid var(--game-color);
-          border-radius: 10px;
-          background: #101a29;
-          font-size: 20px;
+          border-radius: 50%;
+          background: currentColor;
         }
 
-        .tournament-card h3 {
-          margin: 14px 0 17px;
-          font-size: 19px;
-          line-height: 1.4;
-        }
-
-        .event-details {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-          margin-top: auto;
-          padding: 14px 0;
-          border-top: 1px solid #253047;
-          border-bottom: 1px solid #253047;
-        }
-
-        .event-detail span,
-        .summary-price span {
-          display: block;
-          margin-bottom: 7px;
-          color: #8290a8;
+        .banner-game-name {
+          position: absolute;
+          bottom: 12px;
+          left: 14px;
+          color: #d3d0e9;
           font-size: 9px;
-          font-weight: 800;
-          letter-spacing: 1px;
+          font-weight: 900;
+          letter-spacing: 2px;
         }
 
-        .event-detail strong {
-          font-size: 13px;
+        .tournament-content {
+          padding: 19px;
+        }
+
+        .tournament-format {
+          color: #a58aff;
+          font-size: 8px;
+          font-weight: 900;
+          letter-spacing: 2px;
+        }
+
+        .tournament-content h3 {
+          margin: 10px 0 12px;
+          font-size: 17px;
+          line-height: 1.35;
           overflow-wrap: anywhere;
         }
 
-        .prize-detail strong {
-          color: #00e5ff;
-        }
-
-        .event-date {
+        .tournament-date {
           display: flex;
-          align-items: flex-start;
-          gap: 8px;
-          margin: 14px 0;
-          color: #94a1b8;
-          font-size: 11px;
+          align-items: center;
+          gap: 7px;
+          color: #9a9fb3;
+          font-size: 10px;
           line-height: 1.6;
         }
 
-        .event-date > span:first-child {
-          color: #00e5ff;
-          font-size: 15px;
+        .tournament-date span {
+          color: var(--cyan);
+          font-size: 16px;
         }
 
-        .event-button {
-          width: 100%;
-          margin-top: 4px;
+        .tournament-prizes {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          margin: 18px 0;
+          padding: 14px 0;
+          border-top: 1px solid #292d40;
+          border-bottom: 1px solid #292d40;
         }
 
-        .event-button:disabled {
-          border-color: #293145;
-          background: #1a2030;
-          color: #8993a7;
-          transform: none;
-          filter: none;
+        .tournament-prizes small,
+        .tournament-prizes strong {
+          display: block;
+        }
+
+        .tournament-prizes small {
+          margin-bottom: 7px;
+          color: #858ba2;
+          font-size: 8px;
+          font-weight: 900;
+          letter-spacing: 1.2px;
+        }
+
+        .tournament-prizes strong {
+          font-size: 13px;
+          overflow-wrap: anywhere;
+        }
+
+        .prize-value {
+          color: #70efb0;
         }
 
         .empty-state {
+          min-height: 250px;
           display: flex;
-          align-items: center;
           flex-direction: column;
-          padding: 40px 20px;
-          border: 1px dashed #344157;
-          border-radius: 17px;
-          background: #0c121e;
+          justify-content: center;
+          align-items: center;
+          padding: 35px 20px;
+          border: 1px dashed #33374c;
+          border-radius: 14px;
+          background: #10121d;
           text-align: center;
         }
 
-        .empty-state h3 {
-          margin: 12px 0 8px;
-          font-size: 19px;
-        }
-
-        .empty-state p {
-          max-width: 470px;
-          margin: 0 0 18px;
-          color: #8c9ab2;
-          font-size: 13px;
-          line-height: 1.7;
+        .compact-empty {
+          min-height: 210px;
         }
 
         .empty-icon {
-          font-size: 38px;
+          margin-bottom: 12px;
+          font-size: 36px;
         }
 
-        .loading-symbol {
-          color: #00e5ff;
-          font-size: 38px;
+        .empty-state h3 {
+          margin: 8px 0;
+          font-size: 17px;
         }
 
-        .registration-count {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          margin-bottom: 17px;
-          color: #8d9bb2;
+        .empty-state p {
+          margin: 0 0 19px;
+          color: #959bb0;
           font-size: 12px;
+          line-height: 1.8;
         }
 
-        .count-number {
-          display: grid;
-          place-items: center;
+        .loading-spinner {
           width: 30px;
           height: 30px;
-          border: 1px solid #285467;
-          border-radius: 9px;
-          background: #0a202a;
-          color: #00e5ff;
-          font-weight: 900;
+          margin-bottom: 15px;
+          border: 3px solid #33364a;
+          border-top-color: var(--cyan);
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
         }
 
-        .registration-info {
-          display: grid;
-          gap: 0;
-          margin-top: 12px;
+        @keyframes spin {
+          to { transform: rotate(360deg); }
         }
 
-        .registration-info p,
-        .account-detail {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 15px;
-          margin: 0;
-          padding: 10px 0;
-          border-bottom: 1px solid #253047;
+        .message {
+          margin: 15px 0;
+          padding: 12px 14px;
+          border: 1px solid transparent;
+          border-radius: 8px;
           font-size: 12px;
-        }
-
-        .registration-info p span,
-        .account-detail span {
-          flex-shrink: 0;
-          color: #8b9ab2;
-        }
-
-        .registration-info p strong,
-        .account-detail strong {
-          text-align: right;
+          line-height: 1.7;
           overflow-wrap: anywhere;
+        }
+
+        .message-error {
+          border-color: #67333d;
+          background: #2a151d;
+          color: #ff9da9;
+        }
+
+        .message-success {
+          border-color: #1b5b45;
+          background: #10291f;
+          color: #78e7ad;
         }
 
         .registration-layout {
           display: grid;
-          grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-          gap: 17px;
+          grid-template-columns: 0.8fr 1fr;
+          gap: 55px;
           align-items: start;
         }
 
-        .registration-summary,
-        .registration-form-panel,
-        .account-promo,
-        .account-panel {
-          min-width: 0;
-          padding: 24px;
-          border: 1px solid #29374d;
-          border-radius: 17px;
-          background: linear-gradient(145deg, #121c2c, #0b101a);
+        .registration-intro {
+          padding-top: 25px;
         }
 
-        .summary-icon {
-          display: block;
-          margin-bottom: 20px;
-          font-size: 39px;
+        .selected-tournament {
+          display: flex;
+          align-items: center;
+          gap: 13px;
+          margin-top: 28px;
+          padding: 16px;
+          border: 1px solid #2c3045;
+          border-radius: 11px;
+          background: #10131f;
         }
 
-        .registration-summary h3 {
-          margin: 12px 0 8px;
-          font-size: 24px;
-          overflow-wrap: anywhere;
-        }
-
-        .summary-price {
-          padding: 14px 0;
-          border-top: 1px solid #29354a;
-        }
-
-        .summary-price strong {
-          color: #00e5ff;
-          font-size: 18px;
-        }
-
-        .summary-note {
-          margin: 12px 0 0;
-          color: #8795ac;
-          font-size: 11px;
-          line-height: 1.7;
-        }
-
-        .registration-form-panel .form,
-        .account-panel .form {
-          max-width: none;
-        }
-
-        .form label {
+        .selected-icon {
           display: grid;
-          gap: 8px;
-          color: #c5cfe0;
-          font-size: 12px;
-          font-weight: 700;
-        }
-
-        .form input {
-          width: 100%;
-          min-width: 0;
-          padding: 13px 14px;
-          border: 1px solid #303c53;
-          border-radius: 9px;
-          background: #080e19;
-          color: white;
-          font: inherit;
-          font-weight: 400;
-        }
-
-        .form input:focus {
-          outline: none;
-          border-color: #00cfe8;
-          box-shadow: 0 0 0 3px #00e5ff15;
-        }
-
-        .form button {
-          width: 100%;
-        }
-
-        .form button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        .msg {
-          margin-top: 12px;
-          padding: 12px;
-          border: 1px solid #28533d;
+          place-items: center;
+          width: 48px;
+          height: 48px;
+          flex-shrink: 0;
           border-radius: 10px;
-          background: #10291e;
-          color: #87e9ab;
-          font-size: 12px;
-          line-height: 1.7;
+          background: #211a3c;
+          font-size: 25px;
+        }
+
+        .selected-tournament small,
+        .selected-tournament strong,
+        .selected-tournament div span {
+          display: block;
+        }
+
+        .selected-tournament small {
+          margin-bottom: 6px;
+          color: var(--cyan);
+          font-size: 8px;
+          font-weight: 900;
+          letter-spacing: 1.3px;
+        }
+
+        .selected-tournament strong {
+          margin-bottom: 6px;
+          font-size: 13px;
           overflow-wrap: anywhere;
         }
 
-        .err {
-          border-color: #62303a;
-          background: #2d151d;
-          color: #ffadb6;
+        .selected-tournament div span {
+          color: #9ca2b7;
+          font-size: 10px;
         }
 
-        .inline-link {
-          color: #00e5ff;
+        .form-panel,
+        .auth-panel {
+          padding: 25px;
+          border: 1px solid #2b3044;
+          border-radius: 14px;
+          background: linear-gradient(145deg, #141725, #0d101a);
+          box-shadow: 0 18px 50px #0002;
+        }
+
+        .form-panel-heading {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 20px;
+        }
+
+        .form-panel-heading h3 {
+          margin: 0;
+          font-size: 19px;
+        }
+
+        .form-panel-heading span {
+          color: #81879e;
+          font-size: 8px;
+          font-weight: 900;
+          letter-spacing: 1px;
+        }
+
+        .form-panel label,
+        .auth-form label {
+          display: block;
+          margin-bottom: 15px;
+          color: #c6cad8;
+          font-size: 11px;
           font-weight: 800;
+        }
+
+        .arena input {
+          display: block;
+          width: 100%;
+          min-height: 45px;
+          margin-top: 8px;
+          padding: 12px;
+          border: 1px solid #33384e;
+          border-radius: 8px;
+          outline: none;
+          background: #090c15;
+          color: #fff;
+          font-size: 12px;
+        }
+
+        .arena input::placeholder {
+          color: #656b82;
+        }
+
+        .cancel-button {
+          display: block;
+          width: 100%;
+          margin-top: 11px;
+          padding: 10px;
+          border: 0;
+          background: transparent;
+          color: #a5aabd;
+          font-size: 11px;
+          cursor: pointer;
+        }
+
+        .form-footnote {
+          margin: 15px 0 0;
+          color: #737990;
+          font-size: 10px;
+          line-height: 1.7;
+          text-align: center;
+        }
+
+        .registration-count {
+          padding: 9px 12px;
+          border: 1px solid #33384e;
+          border-radius: 8px;
+          color: var(--cyan);
+          font-size: 9px;
+          font-weight: 900;
+          letter-spacing: 1px;
+          white-space: nowrap;
+        }
+
+        .my-registration-list {
+          display: grid;
+          gap: 10px;
+        }
+
+        .my-registration-row {
+          display: flex;
+          align-items: center;
+          gap: 15px;
+          padding: 16px;
+          border: 1px solid #2b3043;
+          border-radius: 11px;
+          background: #10131e;
+        }
+
+        .my-registration-icon {
+          display: grid;
+          place-items: center;
+          width: 48px;
+          height: 48px;
+          flex-shrink: 0;
+          border-radius: 10px;
+          background: #201a3a;
+          font-size: 23px;
+        }
+
+        .my-registration-info {
+          min-width: 0;
+          flex: 1;
+        }
+
+        .my-registration-info strong,
+        .my-registration-info span {
+          display: block;
+          overflow-wrap: anywhere;
+        }
+
+        .my-registration-info strong {
+          font-size: 13px;
+        }
+
+        .my-registration-info span {
+          margin-top: 6px;
+          color: #969bb0;
+          font-size: 10px;
+        }
+
+        .my-registration-meta {
+          text-align: right;
+        }
+
+        .my-registration-meta small {
+          display: block;
+          margin-bottom: 7px;
+          color: #747b93;
+          font-size: 8px;
+          letter-spacing: 1px;
+        }
+
+        .registration-badge {
+          display: inline-block;
+          padding: 6px 8px;
+          border-radius: 5px;
+          background: #123126;
+          color: #70eeb0;
+          font-size: 8px;
+          font-weight: 900;
+        }
+
+        .account-section {
+          padding: 75px 0;
+          border-top: 1px solid #272a3d;
+          border-bottom: 1px solid #272a3d;
+          background:
+            radial-gradient(ellipse at 10% 40%, #25134380, transparent 45%),
+            #0c0e18;
         }
 
         .account-layout {
           display: grid;
-          grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-          gap: 17px;
-          align-items: stretch;
+          grid-template-columns: 1fr 0.85fr;
+          gap: 70px;
+          align-items: center;
         }
 
-        .account-promo {
-          background:
-            radial-gradient(circle at 15% 0%, #16344b, transparent 45%),
-            linear-gradient(145deg, #111c2d, #0a101b);
+        .account-copy h2 {
+          max-width: 480px;
+          font-size: clamp(34px, 4.5vw, 48px);
         }
 
-        .account-symbol {
-          display: block;
-          margin-bottom: 24px;
-          color: #00e5ff;
-          font-size: 52px;
+        .account-copy > p {
+          max-width: 430px;
+          margin-bottom: 25px;
         }
 
-        .account-promo h3,
-        .account-panel h3 {
-          margin: 12px 0;
-          font-size: 23px;
+        .account-benefit {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-top: 13px;
+          color: #c0c4d4;
+          font-size: 11px;
         }
 
-        .account-promo p,
-        .account-panel > p {
-          color: #91a0b8;
-          font-size: 13px;
-          line-height: 1.7;
+        .account-benefit span {
+          display: grid;
+          place-items: center;
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          background: #10372b;
+          color: #6af0b0;
+          font-weight: 900;
         }
 
-        .account-perk {
-          margin-top: 14px;
-          color: #bdcadd;
-          font-size: 12px;
+        .auth-panel {
+          min-width: 0;
         }
 
         .auth-tabs {
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 5px;
-          margin-bottom: 22px;
           padding: 5px;
-          border: 1px solid #29364b;
-          border-radius: 11px;
-          background: #090f1a;
+          border-radius: 9px;
+          background: #090c15;
         }
 
         .auth-tab {
-          padding: 11px 8px;
-          border: 0;
-          border-radius: 8px;
+          padding: 12px 7px;
+          border: 1px solid transparent;
+          border-radius: 7px;
           background: transparent;
-          color: #8e9cb3;
-          font-size: 12px;
-          font-weight: 800;
+          color: #979db2;
+          font-size: 11px;
+          font-weight: 900;
+          cursor: pointer;
         }
 
-        .auth-tab.active {
-          background: #122b3b;
-          color: #00e5ff;
+        .auth-tab-active {
+          border-color: #353b52;
+          background: #191d2c;
+          color: var(--cyan);
         }
 
-        .account-avatar {
-          display: grid;
-          place-items: center;
-          width: 55px;
-          height: 55px;
-          border: 1px solid #285467;
-          border-radius: 15px;
-          background: #102435;
-          font-size: 25px;
+        .auth-heading {
+          margin: 23px 0 20px;
         }
 
-        .account-detail {
-          margin: 6px 0 15px;
+        .auth-heading h3,
+        .signed-in-panel h3 {
+          margin: 0 0 8px;
+          font-size: 23px;
         }
 
-        .site-footer {
-          margin-top: 25px;
-          border-top: 1px solid #202b3e;
-          background: #080c14;
+        .auth-heading p,
+        .signed-in-panel p {
+          margin: 0;
+          color: #969bb0;
+          font-size: 11px;
+          line-height: 1.7;
         }
 
-        .footer-inner {
-          display: flex;
-          align-items: center;
-          flex-direction: column;
-          gap: 15px;
-          padding-top: 32px;
-          padding-bottom: 30px;
+        .auth-terms {
+          margin: 16px 0 0;
+          color: #747990;
+          font-size: 9px;
+          line-height: 1.7;
           text-align: center;
         }
 
-        .footer-inner p {
-          margin: 0;
-          color: #8997ae;
+        .signed-in-panel {
+          text-align: center;
+        }
+
+        .signed-in-icon {
+          display: grid;
+          place-items: center;
+          width: 56px;
+          height: 56px;
+          margin: 0 auto 16px;
+          border: 1px solid #287456;
+          border-radius: 50%;
+          background: #103326;
+          color: #70f0b3;
+          font-size: 25px;
+        }
+
+        .signed-in-panel h3 {
+          margin-top: 13px;
+        }
+
+        .signed-in-panel > strong {
+          display: block;
+          margin-top: 8px;
+          margin-bottom: 22px;
+          color: var(--cyan);
           font-size: 12px;
+          overflow-wrap: anywhere;
+        }
+
+        .cta-strip {
+          padding: 35px 0;
+          border-bottom: 1px solid #25283a;
+          background: linear-gradient(100deg, #101b28, #17102b);
+        }
+
+        .cta-content {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 22px;
+        }
+
+        .cta-content h2 {
+          margin: 10px 0 0;
+          font-size: clamp(20px, 3vw, 30px);
+          letter-spacing: -0.8px;
+        }
+
+        .footer {
+          padding: 34px 0 18px;
+          background: #070910;
+        }
+
+        .footer-main {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 20px;
+          padding-bottom: 25px;
+        }
+
+        .footer-main > p {
+          color: #777d94;
+          font-size: 11px;
         }
 
         .footer-links {
           display: flex;
           flex-wrap: wrap;
-          justify-content: center;
-          gap: 20px;
-          color: #9ba8bd;
-          font-size: 12px;
-        }
-
-        .footer-links a:hover {
-          color: #00e5ff;
-        }
-
-        .footer-inner > small {
-          color: #65738b;
+          gap: 16px;
+          color: #a4a9bc;
           font-size: 10px;
         }
 
+        .footer-bottom {
+          display: flex;
+          justify-content: space-between;
+          gap: 15px;
+          padding-top: 18px;
+          border-top: 1px solid #202337;
+          color: #6f758b;
+          font-size: 9px;
+          letter-spacing: 0.6px;
+        }
+
         @media (max-width: 1000px) {
-          .nav {
-            align-items: flex-start;
-            flex-direction: column;
-            justify-content: center;
-            gap: 13px;
-            padding-top: 15px;
-            padding-bottom: 13px;
+          .nav-links {
+            gap: 11px;
+            font-size: 10px;
           }
 
-          .links {
-            width: 100%;
-            justify-content: flex-start;
-            flex-wrap: nowrap;
-            gap: 17px;
-            overflow-x: auto;
-            padding-bottom: 5px;
-            white-space: nowrap;
-            scrollbar-width: thin;
-          }
-
-          .hero {
-            grid-template-columns: minmax(0, 1fr) minmax(250px, 0.8fr);
-            padding-top: 48px;
+          .hero-layout {
+            gap: 20px;
           }
 
           .hero h1 {
-            font-size: clamp(43px, 5.5vw, 60px);
+            font-size: 62px;
           }
 
-          .game-grid {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+          .games-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
           .tournament-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
+
+          .account-layout {
+            gap: 30px;
+          }
         }
 
-        @media (max-width: 650px) {
-          .nav {
-            min-height: auto;
+        @media (max-width: 760px) {
+          .container {
+            width: min(100% - 30px, 600px);
           }
 
-          .hero {
-            grid-template-columns: 1fr;
-            gap: 28px;
-            padding: 37px 0 25px;
+          .topbar {
+            height: auto;
+            min-height: 67px;
           }
 
-          .hero h1 {
-            font-size: clamp(43px, 12vw, 58px);
-            letter-spacing: -1.8px;
+          .nav-inner {
+            min-height: 67px;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding-top: 10px;
+            padding-bottom: 10px;
           }
 
-          .hero-copy > p {
+          .brand {
             font-size: 14px;
           }
 
-          .hero-trust {
-            gap: 10px 14px;
-            font-size: 10px;
+          .brand-mark {
+            width: 37px;
+            height: 37px;
+            font-size: 22px;
           }
 
-          .hero-art {
-            min-height: 285px;
+          .brand small {
+            font-size: 7px;
+            letter-spacing: 1.5px;
+          }
+
+          .nav-links {
+            order: 3;
+            display: flex;
+            width: 100%;
+            overflow-x: auto;
+            padding: 7px 0 2px;
+            gap: 19px;
+            white-space: nowrap;
+            scrollbar-width: none;
+          }
+
+          .nav-links::-webkit-scrollbar {
+            display: none;
+          }
+
+          .nav-actions {
+            margin-left: auto;
+          }
+
+          .user-pill {
+            max-width: 100px;
+          }
+
+          .hero {
+            padding: 48px 0 35px;
+          }
+
+          .hero-layout {
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .hero h1 {
+            margin-top: 22px;
+            font-size: clamp(51px, 13vw, 72px);
+            letter-spacing: -3px;
+          }
+
+          .hero-description {
+            font-size: 13px;
+          }
+
+          .hero-visual {
+            min-height: 310px;
           }
 
           .hero-emblem {
-            transform: scale(0.86);
+            width: 175px;
+            height: 210px;
           }
 
-          .tag-top {
-            top: 8%;
-            right: 3%;
+          .emblem-top {
+            font-size: 48px;
           }
 
-          .tag-bottom {
-            bottom: 8%;
-            left: 3%;
+          .emblem-sword {
+            font-size: 40px;
           }
 
-          .stats-section {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 9px;
+          .emblem-bottom {
+            font-size: 8px;
           }
 
-          .stat {
-            gap: 9px;
-            padding: 12px;
+          .visual-ring {
+            width: 250px;
+            height: 250px;
           }
 
-          .stat-icon {
-            width: 35px;
-            height: 35px;
-            border-radius: 9px;
-            font-size: 17px;
+          .ring-two {
+            width: 300px;
+            height: 300px;
           }
 
-          .stat strong {
-            font-size: 17px;
+          .card-top {
+            top: 20px;
+            right: 0;
           }
 
-          .stat span:last-child {
-            font-size: 10px;
+          .card-bottom {
+            bottom: 24px;
+            left: 0;
+          }
+
+          .floating-card {
+            padding: 10px;
+            gap: 8px;
+          }
+
+          .floating-card small {
+            font-size: 7px;
+          }
+
+          .floating-card b {
+            font-size: 9px;
+          }
+
+          .floating-icon {
+            font-size: 20px;
+          }
+
+          .stats-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+
+          .stat-item {
+            padding: 17px 12px;
+            border-bottom: 1px solid #24273a;
+          }
+
+          .stat-item:first-child {
+            border-left: 0;
+          }
+
+          .stat-item:nth-child(odd) {
+            border-left: 1px solid #24273a;
+          }
+
+          .stat-item strong {
+            font-size: 21px;
+          }
+
+          .stat-item small {
+            font-size: 7px;
+            letter-spacing: 1px;
           }
 
           .section {
-            padding: 27px 0 32px;
+            padding-top: 52px;
+            padding-bottom: 52px;
           }
 
           .section-heading {
             align-items: flex-start;
             flex-direction: column;
-            gap: 9px;
-            margin-bottom: 18px;
+            gap: 15px;
+            margin-bottom: 23px;
           }
 
-          .section-heading h2 {
-            font-size: 27px;
+          .section-heading h2,
+          .registration-intro h2 {
+            font-size: 31px;
           }
 
-          .heading-mark {
-            font-size: 9px;
-          }
-
-          .game-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
+          .games-grid {
+            gap: 11px;
           }
 
           .game-card {
-            min-height: 155px;
-            padding: 14px 8px;
+            padding: 15px;
           }
 
-          .game-image {
-            width: 66px;
-            height: 66px;
-            border-radius: 14px;
+          .game-card-top {
+            margin-bottom: 18px;
+          }
+
+          .game-icon {
+            width: 45px;
+            height: 45px;
+            font-size: 23px;
+          }
+
+          .game-name {
+            font-size: 14px;
+          }
+
+          .game-card-footer {
+            margin-top: 20px;
+          }
+
+          .tournament-tools {
+            align-items: stretch;
+            flex-direction: column;
+          }
+
+          .filter-list {
+            gap: 6px;
+          }
+
+          .filter-chip {
+            padding: 9px;
+            font-size: 9px;
+          }
+
+          .search-input {
+            width: 100%;
+          }
+
+          .tournament-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .tournament-banner {
+            min-height: 135px;
+          }
+
+          .registration-layout,
+          .account-layout {
+            grid-template-columns: 1fr;
+            gap: 25px;
+          }
+
+          .registration-intro {
+            padding-top: 0;
+          }
+
+          .form-panel,
+          .auth-panel {
+            padding: 19px;
+          }
+
+          .my-registration-row {
+            align-items: flex-start;
+            gap: 10px;
+            padding: 12px;
+          }
+
+          .my-registration-icon {
+            width: 39px;
+            height: 39px;
+            font-size: 20px;
+          }
+
+          .my-registration-info strong {
+            font-size: 11px;
+          }
+
+          .my-registration-info span {
+            font-size: 9px;
+            line-height: 1.6;
+          }
+
+          .my-registration-meta small {
+            font-size: 7px;
+          }
+
+          .registration-badge {
+            font-size: 7px;
+            padding: 5px;
+          }
+
+          .account-copy h2 {
+            font-size: 36px;
+          }
+
+          .cta-content {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .footer-main {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .footer-bottom {
+            flex-direction: column;
+            line-height: 1.6;
+          }
+        }
+
+        @media (max-width: 380px) {
+          .container {
+            width: calc(100% - 22px);
+          }
+
+          .hero h1 {
+            font-size: 47px;
+          }
+
+          .button {
+            padding: 0 12px;
+            font-size: 10px;
+          }
+
+          .games-grid {
+            grid-template-columns: 1fr 1fr;
+          }
+
+          .game-card {
+            padding: 12px;
           }
 
           .game-name {
             font-size: 12px;
           }
 
-          .game-description {
-            font-size: 10px;
+          .tournament-content {
+            padding: 15px;
           }
 
-          .tournament-grid {
-            grid-template-columns: 1fr;
-            gap: 12px;
-          }
-
-          .tournament-card {
-            padding: 17px;
-          }
-
-          .registration-layout,
-          .account-layout {
-            grid-template-columns: 1fr;
-          }
-
-          .registration-summary,
-          .registration-form-panel,
-          .account-promo,
-          .account-panel {
-            padding: 18px;
-          }
-
-          .hero-actions {
-            align-items: stretch;
+          .form-panel-heading {
+            align-items: flex-start;
             flex-direction: column;
-          }
-
-          .hero-actions .btn {
-            width: 100%;
-          }
-
-          .empty-state {
-            padding: 30px 16px;
-          }
-
-          .footer-links {
-            gap: 14px;
           }
         }
       `}</style>
-    </>
+    </main>
   );
 }
